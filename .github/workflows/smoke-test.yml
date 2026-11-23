@@ -133,8 +133,8 @@ jobs:
           REPLY_DEBOUNCE_SECONDS: "1"
         run: |
           # Прямой запрос к ИИ: убедиться, что ключ и модель работают
-          curl -s https://models.github.ai/inference/chat/completions -H "Authorization: Bearer $AI_KEY" -H "Content-Type: application/json" \
-            -d "{\"model\":\"$AI_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Скажи привет\"}],\"max_tokens\":50}" | head -c 600; echo
+          curl -s -i https://models.github.ai/inference/chat/completions -H "Authorization: Bearer $AI_KEY" -H "Content-Type: application/json" \
+            -d "{\"model\":\"$AI_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Скажи привет\"}],\"max_tokens\":50}" | head -c 1500; echo
           node src/server.js > server.log 2>&1 &
           sleep 4
           node test/ci-dialogs.mjs
