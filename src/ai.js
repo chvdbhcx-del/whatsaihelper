@@ -218,8 +218,14 @@ async function openAICompatible(system, messages, json, maxTokens) {
     err.status = res.status;
     throw err;
   }
+  const text = (data.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  if (!text) {
+    // Пустой ответ считаем ошибкой, чтобы причина была видна в панели, а не «передано без причины»
+    const finish = data.choices?.[0]?.finish_reason;
+    throw new Error(`ИИ вернул пустой ответ${finish ? ` (finish_reason: ${finish})` : ""}: ${JSON.stringify(data).slice(0, 300)}`);
+  }
   return {
-    text: (data.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(),
+    text,
     refusal: false,
     inputTokens: data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.completion_tokens ?? 0,
