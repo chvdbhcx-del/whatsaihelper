@@ -1,0 +1,129 @@
+# Проверка готовой версии без участия человека:
+# 1) ставит установщик из последнего релиза на чистую Windows, запускает программу,
+#    проверяет панель, QR-код WhatsApp и проверку обновлений, снимает скриншоты;
+# 2) прогоняет типичные вопросы клиентов через бота с настоящим ИИ (GitHub Models, бесплатно).
+name: Проверка версии
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  models: read
+
+jobs:
+  windows-install:
+    runs-on: windows-latest
+    steps:
+      - name: Скачать установщик из последнего релиза
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern "*.exe" --dir setup
+          Get-ChildItem setup | Format-Table Name, Length
+
+      - name: Тихая установка
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem setup\*.exe)[0].FullName
+          $p = Start-Process $setup -ArgumentList "/S" -PassThru -Wait
+          "Код установщика: $($p.ExitCode)"
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Recurse -Filter "WhatsApp AI Assistant.exe" | Select-Object -First 1
+          if (-not $exe) { throw "Программа не найдена после установки" }
+          "Установлено: $($exe.FullName)"
+          "EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+          Get-ChildItem "$env:USERPROFILE\Desktop" -Filter *.lnk | Format-Table Name
+
+      - name: Запуск и проверка
+        shell: pwsh
+        run: |
+          $dataDir = "$env:APPDATA\WhatsApp AI Assistant\data"
+          New-Item -ItemType Directory -Force $dataDir | Out-Null
+          "ci" | Set-Content "$dataDir\risk-accepted"   # предупреждение о рисках в автотесте не показываем
+          $app = Start-Process $env:EXE -PassThru
+          $pwFile = "$dataDir\panel-password"
+          $base = "http://127.0.0.1:37373"
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep 2
+            if ($app.HasExited) { throw "Программа закрылась сама, код $($app.ExitCode)" }
+            try { Invoke-RestMethod "$base/health" | Out-Null; $ok = $true; break } catch {}
+          }
+          if (-not $ok) { throw "Панель не ответила за 2 минуты" }
+          "Панель запустилась"
+          $pw = (Get-Content $pwFile -Raw).Trim()
+          $h = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:$pw")) }
+
+          $qr = $false
+          for ($i = 0; $i -lt 45; $i++) {
+            $s = Invoke-RestMethod "$base/admin/api/status" -Headers $h
+            $a = $s.accounts[0]
+            if ($a.wa.qrDataUrl) { $qr = $true; break }
+            Start-Sleep 2
+          }
+          "Номер: $($a.name), статус WhatsApp: $($a.wa.status), QR-код получен: $qr, ошибка: $($a.wa.error)"
+
+          $u = $null
+          for ($i = 0; $i -lt 30; $i++) {
+            $u = Invoke-RestMethod "$base/admin/api/app" -Headers $h
+            if ($u.status -in @("latest","error","downloaded","downloading")) { break }
+            Start-Sleep 2
+          }
+          "Версия: $($u.current), обновления: $($u.status) $($u.error)"
+
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $wsh = New-Object -ComObject WScript.Shell
+          $null = $wsh.AppActivate($app.Id)
+          Start-Sleep 3
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          New-Item -ItemType Directory -Force shots | Out-Null
+          $bmp.Save("$PWD\shots\window.png")
+
+          @"
+          ## Установка на Windows
+          | Проверка | Результат |
+          |---|---|
+          | Установщик отработал, программа найдена | да |
+          | Программа запустилась, панель отвечает | да |
+          | Связь с WhatsApp, QR-код получен | $qr (статус $($a.wa.status)) |
+          | Версия | $($u.current) |
+          | Проверка обновлений | $($u.status) $($u.error) |
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+          if (-not $qr) { throw "QR-код не получен" }
+          if ($u.status -ne "latest") { throw "Проверка обновлений: $($u.status) $($u.error)" }
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-screenshots
+          path: shots/
+
+  real-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev --omit=optional
+      - name: Диалоги с настоящим ИИ
+        env:
+          AI_KEY: ${{ secrets.GITHUB_TOKEN }}
+          WA_PROVIDER: web
+          WA_DRY_RUN: "true"
+          ADMIN_PASSWORD: ci
+          DATA_DIR: ${{ runner.temp }}/data
+          PORT: "3000"
+          REPLY_DEBOUNCE_SECONDS: "1"
+        run: |
+          node src/server.js > server.log 2>&1 &
+          sleep 4
+          node test/ci-dialogs.mjs
+      - if: always()
+        run: tail -50 server.log
