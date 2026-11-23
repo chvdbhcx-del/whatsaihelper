@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-ai-assistant",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ИИ-ассистент техподдержки для WhatsApp (официальный Cloud API через BSP) с панелью оператора",
   "type": "module",
   "main": "desktop/main.mjs",
@@ -12,11 +12,13 @@
     "simulate": "node test/simulate.js",
     "loadtest": "node test/loadtest.js",
     "desktop": "electron .",
-    "build:win": "electron-builder --win nsis --x64"
+    "build:win": "electron-builder --win nsis --x64",
+    "release:win": "electron-builder --win nsis --x64 --publish always"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.12.0",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "electron-updater": "^6.8.11",
     "express": "^5.3.0",
     "pino": "^10.4.0",
     "qrcode": "^1.5.4"
@@ -62,6 +64,18 @@
       "createStartMenuShortcut": true,
       "shortcutName": "ИИ-ассистент WhatsApp",
       "artifactName": "WhatsApp-AI-Assistant-Setup-${version}.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "chvdbhcx-del",
+        "repo": "whatsaihelper",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chvdbhcx-del/whatsaihelper.git"
   }
 }

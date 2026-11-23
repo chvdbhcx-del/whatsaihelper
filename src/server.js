@@ -142,6 +142,19 @@ admin.put("/api/knowledge/file", (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Программа для Windows: версия и обновления ----------
+admin.get("/api/app", (_req, res) => {
+  const d = globalThis.__desktop;
+  res.json(d ? { desktop: true, ...d.state() } : { desktop: false, current: process.env.npm_package_version || null });
+});
+admin.post("/api/app/check", (_req, res) => {
+  globalThis.__desktop?.check();
+  res.json({ ok: true });
+});
+admin.post("/api/app/install", (_req, res) => {
+  res.json({ ok: !!globalThis.__desktop?.install() });
+});
+
 admin.get("/api/metrics", (_req, res) => res.json(metrics()));
 admin.post("/api/metrics/reset", (_req, res) => {
   resetMetrics();

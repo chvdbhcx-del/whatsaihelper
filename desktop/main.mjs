@@ -6,6 +6,9 @@ import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import updaterPkg from "electron-updater";
+
+const { autoUpdater } = updaterPkg;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TITLE = "ИИ-ассистент WhatsApp";
@@ -59,6 +62,44 @@ async function firstRunWarning(dataDir) {
   return true;
 }
 
+// ---------- Обновления из GitHub Releases ----------
+// Состояние видно в панели (раздел «О программе») через globalThis.__desktop.
+const update = { status: "idle", version: null, percent: 0, error: null, checkedAt: null };
+let installing = false;
+
+function setupUpdates() {
+  globalThis.__desktop = {
+    version: app.getVersion(),
+    state: () => ({ ...update, current: app.getVersion(), packaged: app.isPackaged }),
+    check: () => checkUpdates(),
+    install: () => {
+      if (update.status !== "downloaded") return false;
+      installing = true;
+      setImmediate(() => autoUpdater.quitAndInstall(true, true));
+      return true;
+    },
+  };
+  if (!app.isPackaged) {
+    update.status = "dev";
+    return;
+  }
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("checking-for-update", () => Object.assign(update, { status: "checking", error: null }));
+  autoUpdater.on("update-not-available", () => Object.assign(update, { status: "latest", checkedAt: Date.now() }));
+  autoUpdater.on("update-available", (i) => Object.assign(update, { status: "downloading", version: i.version, percent: 0, checkedAt: Date.now() }));
+  autoUpdater.on("download-progress", (p) => Object.assign(update, { status: "downloading", percent: Math.round(p.percent) }));
+  autoUpdater.on("update-downloaded", (i) => Object.assign(update, { status: "downloaded", version: i.version, percent: 100 }));
+  autoUpdater.on("error", (e) => Object.assign(update, { status: "error", error: String(e?.message || e).split("\n")[0], checkedAt: Date.now() }));
+  checkUpdates();
+  setInterval(checkUpdates, 4 * 60 * 60 * 1000); // каждые 4 часа
+}
+
+function checkUpdates() {
+  if (!app.isPackaged || ["checking", "downloading", "downloaded"].includes(update.status)) return;
+  autoUpdater.checkForUpdates().catch(() => {});
+}
+
 app.on("login", (event, _wc, _details, _authInfo, callback) => {
   event.preventDefault();
   callback("admin", password);
@@ -94,13 +135,16 @@ app.whenReady().then(async () => {
     return app.quit();
   }
 
-  win = new BrowserWindow({ width: 1280, height: 820, title: TITLE, autoHideMenuBar: true, backgroundColor: "#f4f5f7" });
+  setupUpdates();
+
+  win = new BrowserWindow({ width: 1320, height: 860, minWidth: 900, minHeight: 600, title: TITLE, autoHideMenuBar: true, backgroundColor: "#f3f5f4" });
   win.on("page-title-updated", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
   win.on("close", (e) => {
+    if (installing) return;
     const choice = dialog.showMessageBoxSync(win, {
       type: "question",
       title: TITLE,

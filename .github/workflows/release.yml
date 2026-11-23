@@ -1,0 +1,28 @@
+# Собирает установщик для Windows и публикует его в GitHub Releases.
+# Запуск: отправьте тег вида v1.2.0 (версия должна совпадать с package.json)
+# или нажмите «Run workflow» во вкладке Actions.
+# Установленные программы сами находят новую версию в Releases и обновляются.
+name: Сборка установщика Windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Сборка и публикация
+        run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
