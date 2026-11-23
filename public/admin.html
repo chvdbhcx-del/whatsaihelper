@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Панель оператора</title>
+<style>
+  :root { --bg:#f4f5f7; --panel:#fff; --line:#e3e5e8; --text:#1d2129; --muted:#6b7280; --accent:#128c7e; --warn:#d97706; --bot:#e8f5f2; --op:#e7effc; --cust:#fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111418; --panel:#1a1e24; --line:#2a2f37; --text:#e6e8eb; --muted:#9aa1ab; --bot:#173530; --op:#1b2a44; --cust:#22272e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; }
+  #list { width:320px; border-right:1px solid var(--line); background:var(--panel); overflow-y:auto; flex-shrink:0; }
+  #list h1 { font-size:15px; margin:0; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .chat { padding:10px 16px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .chat:hover, .chat.active { background:var(--bg); }
+  .chat .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .chat .last { color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tag { font-size:11px; padding:1px 6px; border-radius:8px; font-weight:500; }
+  .tag.bot { background:var(--bot); color:var(--accent); }
+  .tag.human { background:#fde7c7; color:#8a4b00; }
+  .attn { border-left:3px solid var(--warn); }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #head { padding:12px 16px; border-bottom:1px solid var(--line); background:var(--panel); display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  #head .who { font-weight:600; flex:1; }
+  #msgs { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:6px; }
+  .m { max-width:70%; padding:7px 10px; border-radius:10px; white-space:pre-wrap; word-wrap:break-word; }
+  .m small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  .m.customer { background:var(--cust); align-self:flex-start; border:1px solid var(--line); }
+  .m.bot { background:var(--bot); align-self:flex-end; }
+  .m.operator { background:var(--op); align-self:flex-end; }
+  .m.system { align-self:center; color:var(--muted); font-size:12px; }
+  form { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line); background:var(--panel); }
+  textarea { flex:1; resize:none; height:44px; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; }
+  button { border:0; border-radius:8px; padding:8px 14px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  button.secondary { background:var(--bg); color:var(--text); border:1px solid var(--line); }
+  #empty { margin:auto; color:var(--muted); }
+  #setup { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  #setup .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  #setup img { width:240px; max-width:100%; align-self:center; background:#fff; padding:6px; border-radius:8px; }
+  #setup input { flex:1; min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  #setup .hint { color:var(--muted); font-size:12px; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--muted); }
+  .dot.ok { background:var(--accent); } .dot.bad { background:var(--warn); }
+  .acc { padding:10px 16px; border-bottom:1px solid var(--line); display:flex; flex-direction:column; gap:6px; }
+  .acc .row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+  .acc img { width:220px; max-width:100%; align-self:center; background:#fff; padding:6px; border-radius:8px; }
+  .acc input { padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  .acc button { padding:4px 10px; }
+  .hint { color:var(--muted); font-size:12px; }
+  .tag.acc-tag { background:var(--bg); color:var(--muted); border:1px solid var(--line); }
+  @media (max-width: 720px) { body { flex-direction:column; } #list { width:100%; height:40vh; border-right:0; border-bottom:1px solid var(--line); } .m { max-width:90%; } }
+</style>
+</head>
+<body>
+<div id="list">
+  <h1>Номера WhatsApp</h1>
+  <div id="accounts"></div>
+  <div id="addacc" style="padding:8px 16px;border-bottom:1px solid var(--line);gap:6px" hidden><input id="addname" placeholder="Название нового номера" style="flex:1;min-width:0;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit"><button class="secondary" type="button" id="addbtn">+ Добавить</button></div>
+  <h1>ИИ</h1>
+  <div id="setup">
+    <form id="settings" style="display:flex;flex-direction:column;gap:6px;padding:0;border:0;background:none">
+      <div class="row"><span>ИИ</span>
+        <select id="preset" style="flex:1;min-width:0;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit">
+          <option value="anthropic">Claude (Anthropic, платно)</option>
+          <option value="gemini">Google Gemini (бесплатный тариф)</option>
+          <option value="openrouter">OpenRouter (бесплатные модели)</option>
+          <option value="groq">Groq (бесплатный тариф)</option>
+          <option value="ollama">Ollama на этом компьютере (бесплатно)</option>
+          <option value="custom">Другой (OpenAI-совместимый API)</option>
+        </select></div>
+      <div id="oaFields" style="display:flex;flex-direction:column;gap:6px">
+        <div class="row"><input id="baseurl" placeholder="Адрес API, например https://.../v1"></div>
+        <div class="row"><input id="model" placeholder="Модель"></div>
+      </div>
+      <div class="row"><input id="aikey" type="password" placeholder="Ключ API" autocomplete="off"></div>
+      <div id="presetHint" class="hint"></div>
+      <button>Сохранить</button>
+      <div id="aistate" class="hint"></div>
+    </form>
+  </div>
+  <h1>База знаний</h1>
+  <div style="padding:8px 16px;border-bottom:1px solid var(--line)"><button class="secondary" type="button" id="kbbtn" style="width:100%">Открыть редактор</button></div>
+  <h1>Диалоги</h1><div id="chats"></div>
+</div>
+<div id="main"><div id="empty">Выберите диалог слева</div></div>
+<script>
+let current = null;
+let accNames = {};
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const time = (t) => t ? new Date(t).toLocaleString("ru-RU", { day:"2-digit", month:"2-digit", hour:"2-digit", minute:"2-digit" }) : "";
+const roleName = { customer:"Клиент", bot:"Ассистент", operator:"Оператор", system:"" };
+
+async function api(path, opts) {
+  const r = await fetch("/admin/api" + path, { headers: { "Content-Type":"application/json" }, ...opts });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.json();
+}
+
+async function loadChats() {
+  const chats = await api("/chats");
+  $("#chats").innerHTML = chats.map((c) => `
+    <div class="chat ${c.needs_attention ? "attn" : ""} ${c.wa_id === current ? "active" : ""}" data-id="${esc(c.wa_id)}">
+      <div class="top"><span>${esc(c.name || "+" + c.wa_id)}</span>
+        <span>${accNames[c.account_id] && Object.keys(accNames).length > 1 ? `<span class="tag acc-tag">${esc(accNames[c.account_id])}</span> ` : ""}<span class="tag ${c.mode}">${c.mode === "bot" ? "бот" : "оператор"}</span></span></div>
+      <div class="last">${esc(c.last_text)}</div>
+    </div>`).join("") || '<div class="chat last">Пока нет диалогов</div>';
+  document.querySelectorAll(".chat[data-id]").forEach((el) => el.onclick = () => openChat(el.dataset.id));
+}
+
+async function openChat(id, keepScroll) {
+  current = id;
+  const { chat, messages } = await api("/chats/" + encodeURIComponent(id));
+  const box = $("#msgs");
+  const atBottom = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const draft = $("#text")?.value ?? "";
+  $("#main").innerHTML = `
+    <div id="head">
+      <span class="who">${esc(chat.name || "")} +${esc(chat.wa_id)}
+        ${chat.handoff_reason ? `<br><small style="color:var(--warn)">${esc(chat.handoff_reason)}</small>` : ""}</span>
+      ${chat.mode === "bot"
+        ? '<button id="take">Взять диалог</button>'
+        : '<button id="release" class="secondary">Вернуть боту</button>'}
+    </div>
+    <div id="msgs">${messages.map((m) => `<div class="m ${m.role}">${esc(m.text)}<small>${roleName[m.role] ? roleName[m.role] + " · " : ""}${time(m.created_at)}</small></div>`).join("")}</div>
+    <form id="send"><textarea id="text" placeholder="Ответ клиенту (Enter — отправить)"></textarea><button>Отправить</button></form>`;
+  $("#text").value = draft;
+  const nb = $("#msgs");
+  if (!keepScroll || atBottom) nb.scrollTop = nb.scrollHeight;
+  $("#take") && ($("#take").onclick = () => setMode("human"));
+  $("#release") && ($("#release").onclick = () => setMode("bot"));
+  $("#text").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#send").requestSubmit(); } };
+  $("#send").onsubmit = async (e) => {
+    e.preventDefault();
+    const text = $("#text").value.trim();
+    if (!text) return;
+    try { await api(`/chats/${encodeURIComponent(id)}/send`, { method:"POST", body: JSON.stringify({ text }) }); $("#text").value = ""; }
+    catch (err) { alert("Не отправлено: " + err.message); }
+    openChat(id); loadChats();
+  };
+  loadChats();
+}
+
+async function setMode(mode) {
+  await api(`/chats/${encodeURIComponent(current)}/mode`, { method:"POST", body: JSON.stringify({ mode }) });
+  openChat(current);
+}
+
+const waText = { stopped:"Остановлен", starting:"Запуск…", qr:"Отсканируйте QR-код", connected:"WhatsApp подключён", reconnecting:"Переподключение…", logged_out:"Вышли из аккаунта", error:"Ошибка", api:"Официальный API" };
+const PRESETS = {
+  gemini:     { url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash", hint: "Ключ: aistudio.google.com → Get API key. Недоступен с российских IP." },
+  openrouter: { url: "https://openrouter.ai/api/v1", model: "", hint: "Ключ: openrouter.ai/keys. Бесплатные модели оканчиваются на :free, список: openrouter.ai/models?q=free" },
+  groq:       { url: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", hint: "Ключ: console.groq.com/keys" },
+  ollama:     { url: "http://localhost:11434/v1", model: "qwen3:8b", hint: "Установите ollama.com, затем в терминале: ollama pull qwen3:8b. Ключ не нужен." },
+  custom:     { url: "", model: "", hint: "Любой сервис с API в формате OpenAI (/chat/completions)." },
+};
+let touched = false, presetTouched = false;
+document.querySelectorAll("#settings input, #settings select").forEach((el) => el.addEventListener("input", () => touched = true));
+function guessPreset(ai) {
+  if (ai.provider === "anthropic") return "anthropic";
+  return Object.keys(PRESETS).find((k) => k !== "custom" && PRESETS[k].url === ai.openaiBaseUrl) || "custom";
+}
+function showPreset(key, fill) {
+  const p = PRESETS[key];
+  $("#oaFields").style.display = key === "anthropic" ? "none" : "flex";
+  $("#aikey").placeholder = key === "anthropic" ? "Ключ Anthropic API (sk-ant-...)" : key === "ollama" ? "Ключ не нужен" : "Ключ API";
+  $("#presetHint").textContent = key === "anthropic" ? "Ключ: console.anthropic.com" : p.hint;
+  if (fill && p) { $("#baseurl").value = p.url; $("#model").value = p.model; }
+}
+$("#preset").onchange = () => { presetTouched = true; showPreset($("#preset").value, true); };
+const accLimitEdit = {}; // id → значение лимита, которое оператор сейчас редактирует
+async function loadStatus() {
+  const s = await api("/status");
+  accNames = Object.fromEntries(s.accounts.map((a) => [a.id, a.name]));
+  $("#addacc").hidden = s.provider !== "web";
+  $("#addacc").style.display = s.provider === "web" ? "flex" : "none";
+  const focused = document.activeElement?.dataset?.limit;
+  if (!focused) {
+    $("#accounts").innerHTML = s.accounts.map((a) => {
+      const st = a.wa.status;
+      const ok = st === "connected" || st === "api" || st === "dry_run";
+      const label = st === "dry_run" ? "Тестовый режим" : waText[st] || st;
+      return `<div class="acc" data-id="${esc(a.id)}">
+        <div class="row"><b>${esc(a.name)}</b>
+          <span>${st === "connected" ? `<button class="secondary" data-act="logout">Выйти</button> ` : ""}${s.provider === "web" ? '<button class="secondary" data-act="remove">Удалить</button>' : ""}</span></div>
+        <div class="row"><span><span class="dot ${ok ? "ok" : "bad"}"></span>${label}${a.wa.me ? " +" + esc(a.wa.me) : ""}</span></div>
+        ${a.wa.error ? `<div class="hint" style="color:var(--warn)">${esc(a.wa.error)}</div>` : ""}
+        ${a.wa.qrDataUrl ? `<img src="${a.wa.qrDataUrl}" alt="QR"><div class="hint">Телефон этого номера: WhatsApp → Настройки → Связанные устройства → Привязка устройства</div>` : ""}
+        <div class="row"><span>Ответов бота сегодня</span><b>${a.usage.sent} / ${a.usage.limit || "∞"}</b></div>
+        <div class="row"><span>Лимит в день (0 = без лимита)</span><input type="number" min="0" style="width:70px" data-limit="${esc(a.id)}" value="${a.usage.limit}"></div>
+        ${s.provider === "web" ? `<div class="hint">База знаний только для этого номера: knowledge/${esc(a.id)}/</div>` : ""}
+      </div>`;
+    }).join("");
+    document.querySelectorAll(".acc [data-limit]").forEach((el) => el.onchange = () =>
+      api(`/accounts/${encodeURIComponent(el.dataset.limit)}`, { method:"POST", body: JSON.stringify({ dailyLimit: el.value }) }).then(loadStatus));
+    document.querySelectorAll(".acc [data-act]").forEach((el) => el.onclick = async () => {
+      const id = el.closest(".acc").dataset.id;
+      if (el.dataset.act === "logout" && confirm("Отвязать этот номер от бота?")) await api(`/accounts/${encodeURIComponent(id)}/logout`, { method:"POST" });
+      if (el.dataset.act === "remove" && confirm("Удалить номер из бота? Переписка в панели сохранится.")) await api(`/accounts/${encodeURIComponent(id)}`, { method:"DELETE" });
+      loadStatus();
+    });
+  }
+  if (!touched && !presetTouched) {
+    $("#preset").value = guessPreset(s.ai);
+    $("#baseurl").value = s.ai.openaiBaseUrl || "";
+    $("#model").value = s.ai.openaiModel || "";
+    showPreset($("#preset").value, false);
+  }
+  const keySet = s.ai.provider === "anthropic" ? s.ai.anthropicKeySet : s.ai.openaiKeySet;
+  $("#aistate").textContent = s.aiMock ? "ИИ: тестовая заглушка (AI_MOCK=true)"
+    : s.ai.provider === "anthropic" ? (keySet ? "Сейчас: Claude, ключ задан." : "Ключ ИИ не задан: бот будет передавать все диалоги оператору.")
+    : `Сейчас: ${s.ai.openaiModel || "модель не задана"}${keySet ? ", ключ задан" : ""}.`;
+}
+// ---------- Редактор базы знаний ----------
+async function openKnowledge(selected) {
+  current = null;
+  const files = await api("/knowledge");
+  const accOptions = Object.entries(accNames).filter(([id]) => id !== "api" && !files.includes(`${id}/notes.md`))
+    .map(([id, name]) => `<option value="${esc(id)}/notes.md">+ Отдельно для номера «${esc(name)}»</option>`).join("");
+  const name = selected || files[0] || "01-persona.md";
+  $("#main").innerHTML = `
+    <div id="head"><span class="who">База знаний</span>
+      <select id="kbfile" style="padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit">
+        ${files.map((f) => `<option ${f === name ? "selected" : ""}>${esc(f)}</option>`).join("")}${accOptions}
+      </select><button id="kbsave">Сохранить</button></div>
+    <div class="hint" style="padding:8px 16px">Файлы в корне используются для всех номеров, файлы в папке номера только для него. Пишите обычным текстом: кто вы, как зовут ассистента, ответы на частые вопросы, цены, график. Изменения действуют сразу.</div>
+    <textarea id="kbtext" style="flex:1;margin:0 16px 16px;resize:none;height:auto;font:13px/1.5 ui-monospace,monospace"></textarea>`;
+  const load = async (n) => { $("#kbtext").value = (await api(`/knowledge/file?name=${encodeURIComponent(n)}`)).text; };
+  await load(name);
+  $("#kbfile").onchange = () => load($("#kbfile").value);
+  $("#kbsave").onclick = async () => {
+    const n = $("#kbfile").value;
+    await api("/knowledge/file", { method:"PUT", body: JSON.stringify({ name: n, text: $("#kbtext").value }) });
+    $("#kbsave").textContent = "Сохранено ✓"; setTimeout(() => openKnowledge(n), 800);
+  };
+}
+$("#kbbtn").onclick = () => openKnowledge();
+
+$("#addbtn").onclick = async () => {
+  const name = $("#addname").value.trim();
+  await api("/accounts", { method:"POST", body: JSON.stringify({ name }) });
+  $("#addname").value = "";
+  loadStatus();
+};
+$("#settings").onsubmit = async (e) => {
+  e.preventDefault();
+  const preset = $("#preset").value;
+  const body = { aiProvider: preset === "anthropic" ? "anthropic" : "openai" };
+  if (preset === "anthropic") body.anthropicApiKey = $("#aikey").value;
+  else Object.assign(body, { openaiBaseUrl: $("#baseurl").value, openaiModel: $("#model").value, openaiApiKey: $("#aikey").value });
+  await api("/settings", { method:"POST", body: JSON.stringify(body) });
+  $("#aikey").value = ""; touched = presetTouched = false; loadStatus();
+};
+
+loadStatus();
+loadChats();
+setInterval(loadStatus, 3000);
+setInterval(() => { loadChats(); if (current && document.activeElement?.id !== "text") openChat(current, true); }, 4000);
+</script>
+</body>
+</html>
