@@ -7,6 +7,9 @@ name: Проверка версии
 on:
   workflow_dispatch:
     inputs:
+      install_tag:
+        description: "Какую версию ставить (пусто = последнюю). Если поставить старую, тест проверит, что она находит и скачивает новую"
+        default: ""
       only_ai:
         description: "Только проверка ИИ, без установки на Windows"
         type: boolean
@@ -28,7 +31,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release download --repo $env:GITHUB_REPOSITORY --pattern "*.exe" --dir setup
+          $tag = "${{ inputs.install_tag }}"
+          if ($tag) { gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern "*.exe" --dir setup }
+          else { gh release download --repo $env:GITHUB_REPOSITORY --pattern "*.exe" --dir setup }
+          $latest = gh release view --repo $env:GITHUB_REPOSITORY --json tagName --jq .tagName
+          "LATEST=$($latest.TrimStart('v'))" >> $env:GITHUB_ENV
           Get-ChildItem setup | Format-Table Name, Length
 
       - name: Тихая установка
@@ -73,9 +80,11 @@ jobs:
           "Номер: $($a.name), статус WhatsApp: $($a.wa.status), QR-код получен: $qr, ошибка: $($a.wa.error)"
 
           $u = $null
-          for ($i = 0; $i -lt 30; $i++) {
+          $old = $false
+          for ($i = 0; $i -lt 90; $i++) {
             $u = Invoke-RestMethod "$base/admin/api/app" -Headers $h
-            if ($u.status -in @("latest","error","downloaded","downloading")) { break }
+            $old = ($u.current -ne $env:LATEST)
+            if ($u.status -in @("latest","error","downloaded")) { break }
             Start-Sleep 2
           }
           "Версия: $($u.current), обновления: $($u.status) $($u.error)"
@@ -98,11 +107,25 @@ jobs:
           | Программа запустилась, панель отвечает | да |
           | Связь с WhatsApp, QR-код получен | $qr (статус $($a.wa.status)) |
           | Версия | $($u.current) |
-          | Проверка обновлений | $($u.status) $($u.error) |
+          | Последняя версия в Releases | $env:LATEST |
+          | Проверка обновлений | $($u.status) $($u.version) $($u.error) |
           "@ >> $env:GITHUB_STEP_SUMMARY
 
           if (-not $qr) { throw "QR-код не получен" }
-          if ($u.status -ne "latest") { throw "Проверка обновлений: $($u.status) $($u.error)" }
+          $want = if ($old) { "downloaded" } else { "latest" }
+          if ($u.status -ne $want) { throw "Проверка обновлений: ожидали $want, получили $($u.status) $($u.error)" }
+          if ($old) {
+            # Ставим скачанное обновление и проверяем, что запустилась новая версия
+            Invoke-RestMethod "$base/admin/api/app/install" -Method Post -Headers $h | Out-Null
+            $new = $null
+            for ($i = 0; $i -lt 90; $i++) {
+              Start-Sleep 3
+              try { $new = Invoke-RestMethod "$base/admin/api/app" -Headers $h; if ($new.current -eq $env:LATEST) { break } } catch {}
+            }
+            "После обновления: версия $($new.current)"
+            "| Обновление установилось и программа перезапустилась | версия $($new.current) |" >> $env:GITHUB_STEP_SUMMARY
+            if ($new.current -ne $env:LATEST) { throw "Обновление не установилось" }
+          }
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4
