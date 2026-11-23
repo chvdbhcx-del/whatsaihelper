@@ -22,7 +22,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Сборка и публикация
-        run: npx electron-builder --win nsis --x64 --publish always
+      - name: Сборка установщика
+        run: npx electron-builder --win nsis --x64 --publish never
+      - name: Публикация в Releases
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          FILES="dist/WhatsApp-AI-Assistant-Setup-$VERSION.exe dist/WhatsApp-AI-Assistant-Setup-$VERSION.exe.blockmap dist/latest.yml"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --clobber
+          else
+            gh release create "$TAG" $FILES --target "$GITHUB_SHA" --title "Версия $VERSION" --notes "Установщик для Windows. Установленные программы обновятся сами."
+          fi
