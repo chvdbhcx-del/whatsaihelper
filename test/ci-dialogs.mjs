@@ -1,4 +1,4 @@
-// Автотест в GitHub Actions: типичные вопросы клиентов → бот с настоящим ИИ (GitHub Models).
+// Автотест в GitHub Actions: типичные вопросы клиентов → бот с настоящим ИИ (OpenAI-совместимый, по умолчанию локальная Ollama).
 // Пишет диалоги в сводку запуска и падает, если бот не ответил или нарушил правила.
 import fs from "node:fs";
 
@@ -8,7 +8,7 @@ const api = async (p, opts = {}) => (await fetch(base + "/admin/api" + p, { head
 
 await api("/settings", {
   method: "POST",
-  body: JSON.stringify({ aiProvider: "openai", openaiBaseUrl: "https://models.github.ai/inference", openaiModel: process.env.AI_MODEL || "openai/gpt-4.1-mini", openaiApiKey: process.env.AI_KEY }),
+  body: JSON.stringify({ aiProvider: "openai", openaiBaseUrl: process.env.AI_BASE_URL || "http://localhost:11434/v1", openaiModel: process.env.AI_MODEL || "qwen2.5:7b", openaiApiKey: process.env.AI_KEY || "" }),
 });
 
 const cases = [
@@ -24,7 +24,7 @@ for (const c of cases) {
   await fetch(`${base}/webhook`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
 }
 
-const deadline = Date.now() + 120_000;
+const deadline = Date.now() + 20 * 60_000; // ИИ на процессоре без видеокарты отвечает медленно
 let chats = [];
 while (Date.now() < deadline) {
   await new Promise((r) => setTimeout(r, 3000));
@@ -33,7 +33,7 @@ while (Date.now() < deadline) {
   if (chats.length >= cases.length && done.every(Boolean)) break;
 }
 
-let out = "## Диалоги с настоящим ИИ\n\nМодель: " + (process.env.AI_MODEL || "openai/gpt-4.1-mini") + " (GitHub Models)\n\n";
+let out = "## Диалоги с настоящим ИИ\n\nМодель: " + (process.env.AI_MODEL || "qwen2.5:7b") + " (" + (process.env.AI_BASE_URL || "Ollama") + ")\n\n";
 const problems = [];
 for (const c of cases) {
   const ch = chats.find((x) => x.wa_id.endsWith(c.from));

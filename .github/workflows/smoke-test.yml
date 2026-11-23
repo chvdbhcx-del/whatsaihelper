@@ -1,7 +1,7 @@
 # Проверка готовой версии без участия человека:
 # 1) ставит установщик из последнего релиза на чистую Windows, запускает программу,
 #    проверяет панель, QR-код WhatsApp и проверку обновлений, снимает скриншоты;
-# 2) прогоняет типичные вопросы клиентов через бота с настоящим ИИ (GitHub Models, бесплатно).
+# 2) прогоняет типичные вопросы клиентов через бота с настоящим ИИ (Ollama прямо на машине GitHub, бесплатно).
 name: Проверка версии
 
 on:
@@ -12,12 +12,11 @@ on:
         type: boolean
         default: false
       model:
-        description: "Модель GitHub Models"
-        default: "openai/gpt-4.1-mini"
+        description: "Модель Ollama"
+        default: "qwen2.5:7b"
 
 permissions:
   contents: read
-  models: read
 
 jobs:
   windows-install:
@@ -121,10 +120,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --omit=dev --omit=optional
-      - name: Диалоги с настоящим ИИ
+      - name: Установить Ollama и модель
         env:
-          AI_KEY: ${{ secrets.GITHUB_TOKEN }}
-          AI_MODEL: ${{ inputs.model || 'openai/gpt-4.1-mini' }}
+          AI_MODEL: ${{ inputs.model || 'qwen2.5:7b' }}
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &) ; sleep 5
+          ollama pull "$AI_MODEL"
+      - name: Диалоги с настоящим ИИ
+        timeout-minutes: 25
+        env:
+          AI_BASE_URL: http://localhost:11434/v1
+          AI_MODEL: ${{ inputs.model || 'qwen2.5:7b' }}
           WA_PROVIDER: web
           WA_DRY_RUN: "true"
           ADMIN_PASSWORD: ci
@@ -132,9 +139,6 @@ jobs:
           PORT: "3000"
           REPLY_DEBOUNCE_SECONDS: "1"
         run: |
-          # Прямой запрос к ИИ: убедиться, что ключ и модель работают
-          curl -s -i https://models.github.ai/inference/chat/completions -H "Authorization: Bearer $AI_KEY" -H "Content-Type: application/json" \
-            -d "{\"model\":\"$AI_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Скажи привет\"}],\"max_tokens\":50}" | head -c 1500; echo
           node src/server.js > server.log 2>&1 &
           sleep 4
           node test/ci-dialogs.mjs
