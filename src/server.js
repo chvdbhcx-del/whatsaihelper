@@ -5,7 +5,7 @@ import express from "express";
 import { config, ROOT } from "./config.js";
 import * as db from "./db.js";
 import * as wa from "./whatsapp.js";
-import { onIncoming, operatorSend, usageToday, resumeBot } from "./bot.js";
+import { onIncoming, operatorSend, usageToday, resumeBot, botReplyTo } from "./bot.js";
 import { metrics, resetMetrics, testAI, listModels } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
@@ -102,6 +102,16 @@ admin.post("/api/chats/:id/send", async (req, res) => {
   } catch (e) {
     log.error("message", `Ответ оператора ${log.maskPhone(req.params.id)} не отправлен: ${e.message}`);
     res.status(502).json({ error: e.message });
+  }
+});
+// Бот отвечает на выбранное сообщение клиента: {messageId, hint}
+admin.post("/api/chats/:id/bot-reply", async (req, res) => {
+  try {
+    const reply = await botReplyTo(req.params.id, Number(req.body?.messageId), String(req.body?.hint ?? ""));
+    res.json({ ok: true, reply });
+  } catch (e) {
+    log.warn("message", `Ответ бота по указанию для ${log.maskPhone(req.params.id)} не отправлен: ${e.message}`);
+    res.status(400).json({ error: e.message });
   }
 });
 admin.get("/api/status", (_req, res) => {

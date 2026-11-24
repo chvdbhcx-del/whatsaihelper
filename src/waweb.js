@@ -199,10 +199,11 @@ class Session {
     });
   }
 
-  async send(jid, text) {
+  async send(jid, text, quote = null) {
     if (this.state.status !== "connected" || !this.sock) throw new Error("WhatsApp не подключён");
     if (ownJids().has(jidNormalizedUser(jid))) throw new Error("Аккаунты бота не пишут друг другу");
-    await this.sock.sendMessage(jid, { text });
+    const quoted = quote?.id ? { key: { remoteJid: jid, fromMe: false, id: quote.id }, message: { conversation: quote.text ?? "" } } : undefined;
+    await this.sock.sendMessage(jid, { text }, quoted ? { quoted } : undefined);
   }
 
   async markRead(jid) {
@@ -279,6 +280,6 @@ function session(accountId) {
   return s;
 }
 
-export const sendText = (accountId, jid, text) => session(accountId).send(jid, text);
+export const sendText = (accountId, jid, text, quote) => session(accountId).send(jid, text, quote);
 export const markRead = (accountId, jid) => sessions.get(accountId)?.markRead(jid);
 export const logout = (accountId) => session(accountId).logout();

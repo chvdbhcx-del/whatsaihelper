@@ -34,6 +34,13 @@ if (!db.prepare(`PRAGMA table_info(chats)`).all().some((c) => c.name === "accoun
   db.exec(`ALTER TABLE chats ADD COLUMN account_id TEXT NOT NULL DEFAULT 'api'`);
 }
 
+// Миграция: ответ бота на конкретное сообщение по указанию оператора (цитата и пометка в панели)
+{
+  const cols = db.prepare(`PRAGMA table_info(messages)`).all().map((c) => c.name);
+  if (!cols.includes("reply_to")) db.exec(`ALTER TABLE messages ADD COLUMN reply_to INTEGER`);
+  if (!cols.includes("directed")) db.exec(`ALTER TABLE messages ADD COLUMN directed INTEGER NOT NULL DEFAULT 0`);
+}
+
 const now = () => Date.now();
 
 export function upsertChat(waId, name, accountId = "api") {
@@ -57,11 +64,11 @@ export function listChats() {
 }
 
 /** Сохраняет сообщение. Возвращает false, если сообщение с таким wa_msg_id уже было (повтор вебхука). */
-export function addMessage(waId, role, text, waMsgId = null) {
+export function addMessage(waId, role, text, waMsgId = null, { replyTo = null, directed = false } = {}) {
   const t = now();
   const res = db
-    .prepare(`INSERT OR IGNORE INTO messages (wa_id, wa_msg_id, role, text, created_at) VALUES (?, ?, ?, ?, ?)`)
-    .run(waId, waMsgId, role, text, t);
+    .prepare(`INSERT OR IGNORE INTO messages (wa_id, wa_msg_id, role, text, created_at, reply_to, directed) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(waId, waMsgId, role, text, t, replyTo, directed ? 1 : 0);
   if (res.changes === 0) return false;
   const extra =
     role === "customer" ? ", last_customer_at = ?" : role === "operator" ? ", last_human_at = ?" : "";
@@ -129,4 +136,8 @@ export function deleteChats(ids) {
 /** Id всех диалогов номера. */
 export function chatIdsOfAccount(accountId) {
   return db.prepare(`SELECT wa_id FROM chats WHERE account_id = ?`).all(accountId).map((r) => r.wa_id);
+}
+
+export function getMessage(id) {
+  return db.prepare(`SELECT * FROM messages WHERE id = ?`).get(id);
 }

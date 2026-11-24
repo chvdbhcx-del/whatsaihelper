@@ -54,13 +54,14 @@ export function splitChatId(chatId) {
   return i < 0 ? { account: "api", to: chatId } : { account: chatId.slice(0, i), to: chatId.slice(i + 1) };
 }
 
-export function sendText(chatId, text) {
+/** quote: {id, text} — входящее сообщение клиента, на которое отвечаем цитатой. */
+export function sendText(chatId, text, quote = null) {
   if (wa.provider === "web") {
     const { account, to } = splitChatId(chatId);
-    return wa.dryRun ? post({ account, to, text: { body: text } }) : waweb.sendText(account, to, text);
+    return wa.dryRun ? post({ account, to, text: { body: text }, ...(quote?.id ? { context: { message_id: quote.id } } : {}) }) : waweb.sendText(account, to, text, quote);
   }
   const to = chatId;
-  return post({ recipient_type: "individual", to, type: "text", text: { body: text, preview_url: false } });
+  return post({ recipient_type: "individual", to, type: "text", text: { body: text, preview_url: false }, ...(quote?.id ? { context: { message_id: quote.id } } : {}) });
 }
 
 /** Синие галочки: клиент видит, что сообщение прочитано. */

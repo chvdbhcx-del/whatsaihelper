@@ -131,3 +131,38 @@ export async function operatorSend(waId, text) {
   log.info("message", `Оператор ответил ${log.maskPhone(waId)}`);
   db.clearAttention(waId);
 }
+
+/**
+ * Оператор попросил бота ответить на конкретное сообщение клиента (с необязательным указанием, что сказать).
+ * Ответ уходит цитатой на это сообщение. Режим чата не меняется: если диалог у оператора, он у него и остаётся.
+ */
+export async function botReplyTo(waId, messageId, hint = "") {
+  const chat = db.getChat(waId);
+  if (!chat) throw new Error("Диалог не найден");
+  const target = db.getMessage(messageId);
+  if (!target || target.wa_id !== waId || target.role !== "customer") throw new Error("Можно выбрать только сообщение клиента из этого диалога");
+  const { sent, limit } = usageToday(chat.account_id);
+  if (limit > 0 && sent >= limit) throw new Error(`Дневной лимит ответов бота (${limit}) исчерпан`);
+  if (busy.has(waId)) throw new Error("Бот уже готовит ответ в этом чате, подождите пару секунд");
+
+  // Если бот и так собирался ответить на последнее сообщение, отменяем это: ответим один раз, по указанию
+  const lastCustomer = db.getMessages(waId, 50).findLast((m) => m.role === "customer");
+  if (lastCustomer?.id === messageId) clearTimeout(timers.get(waId));
+
+  busy.add(waId);
+  try {
+    const history = db.getMessages(waId, config.ai.history + 60);
+    const started = Date.now();
+    const result = await generateReply(history, chat.account_id, { messageId, hint: hint.trim().slice(0, 1000) });
+    if (!result) throw new Error("Нечего отвечать");
+    if (result.handoff && /^Ошибка ИИ/.test(result.handoff_reason || "")) throw new Error(result.handoff_reason);
+    await wa.sendText(waId, result.reply, { id: target.wa_msg_id, text: target.text });
+    db.addMessage(waId, "bot", result.reply, null, { replyTo: messageId, directed: true });
+    db.clearAttention(waId);
+    log.info("message", `Бот ответил ${log.maskPhone(waId)} на выбранное сообщение по указанию оператора${hint ? " (с подсказкой)" : ""} за ${((Date.now() - started) / 1000).toFixed(1)} с`);
+    return result.reply;
+  } finally {
+    busy.delete(waId);
+    if (again.delete(waId)) schedule(waId);
+  }
+}

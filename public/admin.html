@@ -176,6 +176,23 @@
   .icon-btn:hover { color:var(--bad); border-color:var(--bad); }
   .icon-btn svg { width:17px; height:17px; }
 
+  /* ---------- Ответ ботом на выбранное сообщение ---------- */
+  .m { position:relative; }
+  .m .quote, #botTask .quote { border-left:3px solid var(--accent); background:color-mix(in srgb, var(--text) 6%, transparent); border-radius:6px; padding:5px 8px; margin:2px 0 6px; font-size:12.5px; color:var(--muted); white-space:pre-wrap; }
+  .bot-reply-btn { position:absolute; left:calc(100% + 6px); top:50%; transform:translateY(-50%); display:none; align-items:center; gap:5px; white-space:nowrap; border:1px solid var(--line); background:var(--panel); color:var(--accent-text, var(--accent)); border-radius:999px; padding:4px 10px 4px 8px; font-size:12px; cursor:pointer; box-shadow:var(--shadow); font-family:inherit; }
+  .bot-reply-btn svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .m.customer:hover .bot-reply-btn, .m.customer.picked .bot-reply-btn { display:inline-flex; }
+  .m.customer.picked { outline:2px solid var(--accent); outline-offset:2px; }
+  #botTask { margin:0 14px; padding:10px 12px; border:1px solid var(--accent); border-bottom:0; border-radius:12px 12px 0 0; background:var(--panel); display:flex; flex-direction:column; gap:6px; }
+  #botTask[hidden] { display:none; }
+  #botTask .bt-head { display:flex; align-items:center; gap:7px; font-size:13px; color:var(--accent-text, var(--accent)); }
+  #botTask .bt-head svg { width:17px; height:17px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  #botTask .bt-close { margin-left:auto; border:0; background:none; color:var(--muted); font-size:20px; line-height:1; cursor:pointer; }
+  #botTask .quote { margin:0; }
+  #botTask .bt-row { display:flex; gap:8px; }
+  #botTask .bt-row .input { flex:1; }
+  #botTask .hint { font-size:11.5px; }
+
   /* ---------- Журнал ---------- */
   .log-tools { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
   .log-tools select { width:auto; }
@@ -491,11 +508,15 @@ async function openChat(id, refresh) {
   const hadFocus = sameChat && document.activeElement?.id === "text";
   conv.dataset.sig = sig; conv.dataset.id = id;
   let lastDay = "";
+  const byId = new Map(messages.map((m) => [m.id, m]));
   const msgsHtml = messages.map((m) => {
     const d = dayLabel(m.created_at); const sep = d !== lastDay ? `<div class="day">${d}</div>` : ""; lastDay = d;
     if (m.role === "system") return `${sep}<div class="m system">${esc(m.text)}</div>`;
-    const label = m.role === "bot" ? '<span class="role bot">Бот</span>' : m.role === "operator" ? '<span class="role op">Оператор</span>' : "";
-    return `${sep}<div class="m ${m.role}">${label}${esc(m.text)}<span class="time">${hm(m.created_at)}</span></div>`;
+    const label = m.role === "bot" ? `<span class="role bot">Бот${m.directed ? " · по указанию" : ""}</span>` : m.role === "operator" ? '<span class="role op">Оператор</span>' : "";
+    const q = m.reply_to ? byId.get(m.reply_to) : null;
+    const quote = m.reply_to ? `<div class="quote">${q ? esc(q.text.length > 140 ? q.text.slice(0, 140) + "…" : q.text) : "Сообщение удалено"}</div>` : "";
+    const act = m.role === "customer" ? `<button class="bot-reply-btn" data-mid="${m.id}" title="Ответить ботом на это сообщение"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 6 6v5"/></svg>Ответить ботом</button>` : "";
+    return `${sep}<div class="m ${m.role}" data-mid="${m.id}">${label}${quote}${esc(m.text)}<span class="time">${hm(m.created_at)}</span>${act}</div>`;
   }).join("");
   const multi = Object.keys(accNames).length > 1;
   conv.innerHTML = `
@@ -509,6 +530,12 @@ async function openChat(id, refresh) {
     </div>
     ${chat.needs_attention || chat.handoff_reason ? `<div class="handoff"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>${esc(chat.handoff_reason || "Нужно внимание оператора")}</div>` : ""}
     <div id="msgs">${msgsHtml || '<div class="empty">Сообщений пока нет</div>'}</div>
+    <div id="botTask" hidden>
+      <div class="bt-head"><svg viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></svg><b>Бот ответит на сообщение</b><button type="button" class="bt-close" id="btClose" title="Отмена">×</button></div>
+      <div class="quote" id="btQuote"></div>
+      <div class="bt-row"><input class="input" id="btHint" placeholder="Что сказать? Например: предложи доставку завтра до 18:00 (необязательно)" maxlength="1000"><button class="btn sm" id="btGo" type="button">Ответить ботом</button></div>
+      <div class="hint">Ответ уйдёт клиенту цитатой на это сообщение. Подсказку клиент не увидит. Режим чата не меняется.</div>
+    </div>
     <form id="composer"><textarea id="text" rows="1" placeholder="Сообщение клиенту"></textarea><button class="send" title="Отправить (Enter)"><svg viewBox="0 0 24 24"><path d="M4 12 20 4l-4 16-4-6-8-2Z"/><path d="m12 14 8-10"/></svg></button></form>
     <div class="compose-hint">${chat.mode === "bot" ? "Бот отвечает сам. Если напишете здесь, бот замолчит в этом чате на час." : "Вы ведёте диалог. Нажмите «Вернуть боту», чтобы бот продолжил."} Enter — отправить, Shift+Enter — новая строка.</div>`;
   const t = $("#text"); t.value = draft;
@@ -523,6 +550,33 @@ async function openChat(id, refresh) {
     await api(`/chats/${encodeURIComponent(id)}`, { method:"DELETE" });
     closeChat(); toast("Диалог удалён"); refreshChats();
   };
+  // Ответ ботом на выбранное сообщение
+  const bt = $("#botTask");
+  const openTask = (mid) => {
+    const m = byId.get(mid); if (!m) return;
+    state.botTask = { chat: id, mid };
+    $("#btQuote").textContent = m.text.length > 200 ? m.text.slice(0, 200) + "…" : m.text;
+    $$("#msgs .m.picked").forEach((x) => x.classList.remove("picked"));
+    $(`#msgs .m[data-mid="${mid}"]`)?.classList.add("picked");
+    bt.hidden = false; $("#btHint").focus();
+    $(`#msgs .m[data-mid="${mid}"]`)?.scrollIntoView({ block:"nearest" });
+  };
+  const closeTask = () => { state.botTask = null; bt.hidden = true; $$("#msgs .m.picked").forEach((x) => x.classList.remove("picked")); };
+  $$("#msgs .bot-reply-btn").forEach((b) => b.onclick = (e) => { e.stopPropagation(); openTask(Number(b.dataset.mid)); });
+  $("#btClose").onclick = closeTask;
+  $("#btHint").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("#btGo").click(); } if (e.key === "Escape") closeTask(); };
+  $("#btGo").onclick = async () => {
+    const task = state.botTask; if (!task) return;
+    const go = $("#btGo"); go.disabled = true; go.textContent = "Бот пишет…";
+    try {
+      await api(`/chats/${encodeURIComponent(id)}/bot-reply`, { method:"POST", body: JSON.stringify({ messageId: task.mid, hint: $("#btHint").value }) });
+      state.botTask = null; state.botHint = ""; toast("Бот ответил клиенту");
+    } catch (err) { toast("Бот не ответил: " + err.message); go.disabled = false; go.textContent = "Ответить ботом"; return; }
+    refreshChats();
+  };
+  if (state.botTask?.chat === id && byId.has(state.botTask.mid)) { const h = state.botHint ?? ""; openTask(state.botTask.mid); $("#btHint").value = h; if (!hadFocus) $("#btHint").focus(); }
+  else state.botTask = null;
+  $("#btHint").oninput = (e) => { state.botHint = e.target.value; };
   t.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } };
   $("#composer").onsubmit = async (e) => {
     e.preventDefault();

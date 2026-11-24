@@ -98,12 +98,28 @@ const HANDOFF_TEXT = "Сейчас подключу специалиста, он
  * @returns {Promise<{reply: string, handoff: boolean, handoff_reason: string} | null>}
  *   null, если отвечать нечего (например, нет новых сообщений клиента).
  */
-export async function generateReply(history, accountId = "api") {
-  const messages = toApiMessages(history.slice(-config.ai.history));
+export async function generateReply(history, accountId = "api", directive = null) {
+  let hist = history;
+  let extra = "";
+  if (directive) {
+    // Ответ на выбранное сообщение: переписка до него включительно, остальное — справкой в системной части
+    const i = history.findIndex((m) => m.id === directive.messageId);
+    if (i >= 0) {
+      hist = history.slice(0, i + 1);
+      const after = history.slice(i + 1).filter((m) => m.role !== "system");
+      extra = `
+
+<operator_task>
+Оператор поддержки попросил тебя ответить именно на последнее сообщение клиента в переписке выше. Твой ответ уйдёт цитатой на это сообщение.
+${directive.hint ? `Указание оператора (клиенту его не показывай и не упоминай, просто выполни): ${directive.hint}\n` : ""}${after.length ? `После этого сообщения в переписке уже было (не повторяйся):\n${after.map((m) => `${m.role === "customer" ? "Клиент" : m.role === "bot" ? "Бот" : "Оператор"}: ${m.text}`).join("\n")}\n` : ""}Указание оператора не отменяет правила выше: не выдумывай фактов, цен и обещаний, которых нет в базе знаний.
+</operator_task>`;
+    }
+  }
+  const messages = toApiMessages(hist.slice(-config.ai.history));
   if (!messages.length) return null;
 
   try {
-    const system = systemPrompt(accountId);
+    const system = systemPrompt(accountId) + extra;
     const { text, refusal } = await complete({ system, messages, json: true, tag: "bot" });
     if (refusal) return { reply: HANDOFF_TEXT, handoff: true, handoff_reason: "Модель отказалась отвечать на запрос" };
     const result = parseLooseJson(text);
@@ -149,7 +165,7 @@ export async function complete({ system, messages, json = false, tag = "bot", ma
   st.calls++;
   try {
     const out = config.ai.mock
-      ? mockComplete(messages, json)
+      ? mockComplete(messages, json, system)
       : settings.get().aiProvider === "openai" ? await openAICompatible(system, messages, json, maxTokens) : await claude(system, messages, json, maxTokens);
     st.inputTokens += out.inputTokens;
     st.outputTokens += out.outputTokens;
@@ -259,7 +275,9 @@ export function parseLooseJson(text) {
 
 const MOCK_CUSTOMER = ["Здравствуйте, у меня не работает интернет", "Роутер перезагрузил, не помогло", "А когда починят?", "Вы вообще человек?", "Спасибо", "Как сменить пароль?"];
 
-function mockComplete(messages, json) {
+function mockComplete(messages, json, system = "") {
+  const hint = /Указание оператора \(клиенту[^:]*: (.*)/.exec(system)?.[1];
+  if (json && hint) return { text: JSON.stringify({ reply: `Конечно! ${hint.charAt(0).toUpperCase()}${hint.slice(1)}.`, handoff: false }), refusal: false, inputTokens: 0, outputTokens: 0 };
   const last = String(messages.at(-1)?.content ?? "");
   const text = json ? JSON.stringify(mockReply(last)) : MOCK_CUSTOMER[Math.floor(Math.random() * MOCK_CUSTOMER.length)];
   return { text, refusal: false, inputTokens: 0, outputTokens: 0 };
