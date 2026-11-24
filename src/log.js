@@ -10,6 +10,12 @@ export const LOG_DIR = path.join(config.dataDir, "logs");
 const KEEP_DAYS = 14;
 const MAX_MEMORY = 3000;
 const entries = [];
+const listeners = new Set();
+/** Подписка на новые записи (окно программы показывает по ним уведомления). */
+export function onEntry(fn) {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
 let seq = 0;
 
 fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -57,6 +63,13 @@ export function log(level, category, message) {
   const e = { id: ++seq, time: Date.now(), level, category, message: String(message).slice(0, 2000) };
   entries.push(e);
   if (entries.length > MAX_MEMORY) entries.shift();
+  for (const fn of listeners) {
+    try {
+      fn(e);
+    } catch {
+      // уведомления не должны ломать журнал
+    }
+  }
   try {
     fs.appendFileSync(path.join(LOG_DIR, `app-${day(e.time)}.log`), fmt(e) + "\n");
   } catch {

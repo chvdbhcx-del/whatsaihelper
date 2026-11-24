@@ -110,6 +110,18 @@ async function respond(waId) {
   }
 }
 
+/**
+ * Оператор вернул диалог боту: если последнее сообщение клиента осталось без ответа, бот отвечает на него сразу,
+ * учитывая всю переписку, включая ответы оператора. Дальше бот отвечает как обычно.
+ */
+export function resumeBot(waId) {
+  const last = db.getMessages(waId, 50).findLast((m) => m.role !== "system");
+  if (last?.role === "customer") {
+    log.info("message", `${log.maskPhone(waId)}: диалог возвращён боту, отвечаем на последнее сообщение клиента`);
+    schedule(waId);
+  }
+}
+
 /** Ответ оператора из панели. */
 export async function operatorSend(waId, text) {
   // Писать можно только тем, кто сам написал первым: никаких рассылок

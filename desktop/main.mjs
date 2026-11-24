@@ -1,6 +1,6 @@
 // Программа для Windows: запускает бота и открывает панель оператора в окне.
 // Терминал и npm не нужны: вход в WhatsApp по QR и ключ ИИ настраиваются в окне.
-import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, Notification, powerSaveBlocker, shell } from "electron";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -79,6 +79,13 @@ function setupUpdates() {
       try {
         fs.writeFileSync(path.join(app.getPath("userData"), "theme"), nativeTheme.themeSource);
       } catch {}
+    },
+    // Автозапуск вместе с Windows: после перезагрузки компьютера бот снова отвечает сам
+    getAutostart: () => app.getLoginItemSettings().openAtLogin,
+    setAutostart: (on) => {
+      app.setLoginItemSettings({ openAtLogin: !!on, args: ["--hidden"] });
+      ulog("info", on ? "Автозапуск с Windows включён" : "Автозапуск с Windows выключен");
+      return app.getLoginItemSettings().openAtLogin;
     },
     openPath: (p) => {
       shell.openPath(p);
@@ -161,12 +168,31 @@ app.whenReady().then(async () => {
     await server.ready;
     const logm = await import(pathToFileURL(path.join(ROOT, "src", "log.js")).href);
     ulog = (level, msg) => logm.log(level, "update", msg);
+    // Уведомление Windows, если номер отключился или требует QR-кода (не чаще раза в минуту на одно и то же)
+    const shown = new Map();
+    logm.onEntry((e) => {
+      if (e.category !== "whatsapp" || e.level === "info" || !Notification.isSupported()) return;
+      const key = e.message.replace(/\d+/g, "#");
+      if (Date.now() - (shown.get(key) ?? 0) < 60_000) return;
+      shown.set(key, Date.now());
+      const n = new Notification({ title: e.level === "error" ? "WhatsApp: нужна помощь" : "WhatsApp: проблема с подключением", body: e.message.slice(0, 200) });
+      n.on("click", () => { if (win) { win.show(); win.focus(); } });
+      n.show();
+    });
+    // Не даём Windows усыпить программу: во сне связь с WhatsApp рвётся, а бот не отвечает
+    powerSaveBlocker.start("prevent-app-suspension");
   } catch (e) {
     dialog.showErrorBox(TITLE, `Не удалось запустить бота:\n${e.stack || e.message}`);
     return app.quit();
   }
 
   setupUpdates();
+  // Первый запуск: включаем автозапуск, чтобы после перезагрузки бот работал сам (выключается в «О программе»)
+  const autoFlag = path.join(folders.dataDir, "autostart-set");
+  if (app.isPackaged && !fs.existsSync(autoFlag)) {
+    globalThis.__desktop.setAutostart(true);
+    fs.writeFileSync(autoFlag, "1");
+  }
 
   win = new BrowserWindow({ width: 1320, height: 860, minWidth: 900, minHeight: 600, title: TITLE, autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1412" : "#f3f5f4" });
   win.on("page-title-updated", (e) => e.preventDefault());
@@ -191,6 +217,7 @@ app.whenReady().then(async () => {
     }
   });
   win.loadURL(`http://127.0.0.1:${port}/admin/`);
+  if (process.argv.includes("--hidden")) win.minimize(); // запуск вместе с Windows: сразу в свёрнутом виде
 });
 
 app.on("window-all-closed", () => app.quit());

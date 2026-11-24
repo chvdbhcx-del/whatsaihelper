@@ -77,7 +77,9 @@ export function getMessages(waId, limit = 200) {
 }
 
 export function setMode(waId, mode, { reason = null, attention = mode === "human" } = {}) {
-  db.prepare(`UPDATE chats SET mode = ?, handoff_reason = ?, needs_attention = ?, updated_at = ? WHERE wa_id = ?`).run(
+  // Возврат боту снимает паузу после ответа оператора: бот сразу продолжает разговор
+  const resume = mode === "bot" ? ", last_human_at = NULL" : "";
+  db.prepare(`UPDATE chats SET mode = ?, handoff_reason = ?, needs_attention = ?, updated_at = ?${resume} WHERE wa_id = ?`).run(
     mode,
     reason,
     attention ? 1 : 0,
@@ -105,4 +107,26 @@ export function hasCustomerMessages(waId) {
 
 export function markAttention(waId) {
   db.prepare(`UPDATE chats SET needs_attention = 1 WHERE wa_id = ?`).run(waId);
+}
+
+/** Удаляет диалоги вместе с сообщениями. Возвращает, сколько диалогов удалено. */
+export function deleteChats(ids) {
+  let n = 0;
+  db.exec("BEGIN");
+  try {
+    for (const id of ids) {
+      db.prepare(`DELETE FROM messages WHERE wa_id = ?`).run(id);
+      n += Number(db.prepare(`DELETE FROM chats WHERE wa_id = ?`).run(id).changes);
+    }
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  return n;
+}
+
+/** Id всех диалогов номера. */
+export function chatIdsOfAccount(accountId) {
+  return db.prepare(`SELECT wa_id FROM chats WHERE account_id = ?`).all(accountId).map((r) => r.wa_id);
 }

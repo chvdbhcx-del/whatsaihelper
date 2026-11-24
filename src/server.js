@@ -5,7 +5,7 @@ import express from "express";
 import { config, ROOT } from "./config.js";
 import * as db from "./db.js";
 import * as wa from "./whatsapp.js";
-import { onIncoming, operatorSend, usageToday } from "./bot.js";
+import { onIncoming, operatorSend, usageToday, resumeBot } from "./bot.js";
 import { metrics, resetMetrics, testAI, listModels } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
@@ -73,11 +73,24 @@ admin.get("/api/chats/:id", (req, res) => {
   if (!chat) return res.sendStatus(404);
   res.json({ chat, messages: db.getMessages(req.params.id) });
 });
+// Удаление диалогов: один (DELETE) или несколько сразу (POST /api/chats/delete {ids})
+admin.delete("/api/chats/:id", (req, res) => {
+  const n = db.deleteChats([req.params.id]);
+  if (n) log.info("message", `Удалён диалог ${log.maskPhone(req.params.id)}`);
+  res.json({ ok: true, deleted: n });
+});
+admin.post("/api/chats/delete", (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(String).slice(0, 5000) : [];
+  const n = db.deleteChats(ids);
+  log.info("message", `Удалено диалогов: ${n}`);
+  res.json({ ok: true, deleted: n });
+});
 admin.post("/api/chats/:id/mode", (req, res) => {
   const mode = req.body?.mode === "human" ? "human" : "bot";
   db.setMode(req.params.id, mode, { reason: mode === "human" ? "Оператор перехватил диалог" : null, attention: false });
   db.addMessage(req.params.id, "system", mode === "human" ? "Оператор взял диалог" : "Диалог возвращён боту");
   log.info("message", `${log.maskPhone(req.params.id)}: ${mode === "human" ? "оператор взял диалог" : "диалог возвращён боту"}`);
+  if (mode === "bot") resumeBot(req.params.id);
   res.json({ ok: true });
 });
 admin.post("/api/chats/:id/send", async (req, res) => {
@@ -151,11 +164,15 @@ admin.put("/api/knowledge/file", (req, res) => {
 // ---------- Программа для Windows: версия и обновления ----------
 admin.get("/api/app", (_req, res) => {
   const d = globalThis.__desktop;
-  res.json(d ? { desktop: true, ...d.state() } : { desktop: false, current: process.env.npm_package_version || null });
+  res.json(d ? { desktop: true, ...d.state(), autostart: d.getAutostart?.() ?? false } : { desktop: false, current: process.env.npm_package_version || null });
 });
 admin.post("/api/app/check", (_req, res) => {
   globalThis.__desktop?.check();
   res.json({ ok: true });
+});
+admin.post("/api/app/autostart", (req, res) => {
+  const d = globalThis.__desktop;
+  res.json({ ok: !!d?.setAutostart, on: d?.setAutostart ? d.setAutostart(!!req.body?.on) : false });
 });
 admin.post("/api/app/theme", (req, res) => {
   globalThis.__desktop?.setTheme?.(String(req.body?.theme || "system"));
@@ -218,10 +235,11 @@ admin.post("/api/accounts/:id/logout", async (req, res) => {
 });
 admin.delete("/api/accounts/:id", async (req, res) => {
   if (!settings.account(req.params.id)) return res.sendStatus(404);
-  await waweb.removeAccount(req.params.id);
+  await waweb.removeAccount(req.params.id); // выход из WhatsApp и удаление данных входа
   settings.removeAccount(req.params.id);
-  log.info("whatsapp", `Номер «${req.params.id}» удалён`);
-  res.json({ ok: true });
+  const chats = req.query.chats === "1" ? db.deleteChats(db.chatIdsOfAccount(req.params.id)) : 0;
+  log.info("whatsapp", `Номер «${req.params.id}» удалён${chats ? `, удалено диалогов: ${chats}` : ""}`);
+  res.json({ ok: true, deletedChats: chats });
 });
 app.use("/admin", admin);
 

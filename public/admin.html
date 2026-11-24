@@ -167,6 +167,15 @@
   .kpi small { color:var(--muted); font-size:12px; }
   .kpi b { display:block; font-size:24px; font-weight:650; margin-top:2px; }
 
+  .list-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .chat .pick { display:none; width:18px; height:18px; margin:11px 0 0; flex:none; accent-color:var(--accent); }
+  #chatItems.selecting .chat .pick { display:block; }
+  #bulkBar { display:none; padding:10px 14px; border-top:1px solid var(--line); gap:8px; align-items:center; background:var(--panel); }
+  #bulkBar.show { display:flex; }
+  .icon-btn { border:1px solid var(--line); background:var(--panel); color:var(--muted); border-radius:9px; width:36px; height:36px; display:grid; place-items:center; cursor:pointer; flex:none; }
+  .icon-btn:hover { color:var(--bad); border-color:var(--bad); }
+  .icon-btn svg { width:17px; height:17px; }
+
   /* ---------- Журнал ---------- */
   .log-tools { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
   .log-tools select { width:auto; }
@@ -233,7 +242,7 @@
   <div id="content" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
 </main>
 
-<div id="modal"><div class="card"><h2 id="modalTitle"></h2><div id="modalText" class="hint" style="font-size:13.5px"></div><div class="actions"><button class="btn ghost" id="modalNo">Отмена</button><button class="btn" id="modalYes">Да</button></div></div></div>
+<div id="modal"><div class="card"><h2 id="modalTitle"></h2><div id="modalText" class="hint" style="font-size:13.5px"></div><label id="modalCheckRow" style="display:none;margin-top:12px;gap:8px;align-items:center;cursor:pointer;font-size:13.5px"><input type="checkbox" id="modalCheck"><span id="modalCheckText"></span></label><div class="actions"><button class="btn ghost" id="modalNo">Отмена</button><button class="btn" id="modalYes">Да</button></div></div></div>
 <div id="toast"></div>
 
 <script>
@@ -251,9 +260,12 @@ function toast(text) {
   const t = $("#toast"); t.textContent = text; t.classList.add("show");
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2200);
 }
-function ask(title, text, yes = "Да", danger = false) {
+function ask(title, text, yes = "Да", danger = false, checkbox = "") {
   return new Promise((resolve) => {
     $("#modalTitle").textContent = title; $("#modalText").textContent = text;
+    $("#modalCheckRow").style.display = checkbox ? "flex" : "none"; $("#modalCheck").checked = false; $("#modalCheckText").textContent = checkbox;
+    ask.checked = false;
+    $("#modalCheck").onchange = (e) => { ask.checked = e.target.checked; };
     $("#modalYes").textContent = yes; $("#modalYes").className = danger ? "btn danger" : "btn";
     $("#modal").classList.add("open");
     const done = (v) => { $("#modal").classList.remove("open"); resolve(v); };
@@ -334,30 +346,59 @@ function renderChats(c) {
     <div id="chatsView">
       <aside id="chatList">
         <div class="top">
-          <h1>Диалоги</h1>
+          <div class="list-head"><h1>Диалоги</h1><button class="btn ghost sm" id="selectBtn" type="button">Выбрать</button></div>
           <input class="input" id="search" placeholder="Поиск по имени, номеру или тексту" value="${esc(state.search)}">
           <div class="tabs"><button data-f="all">Все</button><button data-f="attn">Внимание</button><button data-f="human">У оператора</button></div>
         </div>
         <div id="chatItems"></div>
+        <div id="bulkBar"><label class="row" style="gap:6px;cursor:pointer"><input type="checkbox" id="pickAll" style="accent-color:var(--accent)">Все</label><span class="hint" id="pickCount" style="flex:1"></span><button class="btn danger sm" id="bulkDelete" type="button">Удалить</button></div>
       </aside>
       <section id="conv"><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.2A8.5 8.5 0 1 1 21 12Z"/></svg><div>Выберите диалог слева</div></div></section>
     </div>`;
   $("#search").oninput = (e) => { state.search = e.target.value; drawChatList(); };
   $$(".tabs button").forEach((b) => b.onclick = () => { state.filter = b.dataset.f; drawChatList(); });
+  $("#selectBtn").onclick = () => { state.selecting = !state.selecting; state.picked = new Set(); drawChatList(); };
+  $("#pickAll").onchange = (e) => { state.picked = new Set(e.target.checked ? visibleChats().map((c) => c.wa_id) : []); drawChatList(); };
+  $("#bulkDelete").onclick = async () => {
+    const ids = [...state.picked]; if (!ids.length) return;
+    if (!await ask(`Удалить диалоги (${ids.length})?`, "Переписка будет удалена из программы без возможности восстановления. У клиентов в WhatsApp сообщения останутся. Если клиент напишет снова, диалог начнётся заново.", "Удалить", true)) return;
+    const r = await api("/chats/delete", { method:"POST", body: JSON.stringify({ ids }) });
+    if (ids.includes(state.current)) closeChat();
+    state.selecting = false; state.picked = new Set();
+    toast(`Удалено диалогов: ${r.deleted}`); refreshChats();
+  };
   drawChatList();
   if (state.current) openChat(state.current);
+}
+function visibleChats() {
+  const q = state.search.trim().toLowerCase();
+  return state.chats.filter((c) =>
+    (state.filter === "all" || (state.filter === "attn" ? c.needs_attention : c.mode === "human")) &&
+    (!q || `${c.name} ${c.wa_id} ${c.last_text}`.toLowerCase().includes(q)));
+}
+function closeChat() {
+  state.current = null;
+  const conv = $("#conv");
+  if (conv) { conv.dataset.id = ""; conv.innerHTML = '<div class="empty"><div>Выберите диалог слева</div></div>'; }
 }
 function drawChatList() {
   const box = $("#chatItems"); if (!box) return;
   $$(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.f === state.filter));
-  const q = state.search.trim().toLowerCase();
   const multi = Object.keys(accNames).length > 1;
-  const list = state.chats.filter((c) =>
-    (state.filter === "all" || (state.filter === "attn" ? c.needs_attention : c.mode === "human")) &&
-    (!q || `${c.name} ${c.wa_id} ${c.last_text}`.toLowerCase().includes(q)));
+  const list = visibleChats();
+  state.picked = new Set([...(state.picked || [])].filter((id) => state.chats.some((c) => c.wa_id === id)));
+  box.classList.toggle("selecting", !!state.selecting);
+  $("#bulkBar").classList.toggle("show", !!state.selecting);
+  $("#selectBtn").textContent = state.selecting ? "Отмена" : "Выбрать";
+  if (state.selecting) {
+    $("#pickCount").textContent = state.picked.size ? `Выбрано: ${state.picked.size}` : "Отметьте диалоги";
+    $("#bulkDelete").disabled = !state.picked.size;
+    $("#pickAll").checked = list.length > 0 && list.every((c) => state.picked.has(c.wa_id));
+  }
   const scroll = box.scrollTop;
   box.innerHTML = list.map((c) => `
     <div class="chat ${c.needs_attention ? "attn" : ""} ${c.wa_id === state.current ? "active" : ""}" data-id="${esc(c.wa_id)}">
+      <input type="checkbox" class="pick" ${state.picked?.has(c.wa_id) ? "checked" : ""} tabindex="-1">
       ${avatar(c.name || phone(c.wa_id), c.wa_id)}
       <div class="body">
         <div class="line1"><span class="name">${esc(c.name || phone(c.wa_id))}</span><span class="when">${shortTime(c.updated_at)}</span></div>
@@ -366,7 +407,12 @@ function drawChatList() {
       </div>
     </div>`).join("") || `<div class="empty">${state.chats.length ? "Ничего не найдено" : "Пока нет диалогов.<br>Они появятся, когда клиенты напишут на подключённый номер."}</div>`;
   box.scrollTop = scroll;
-  $$(".chat[data-id]", box).forEach((el) => el.onclick = () => openChat(el.dataset.id));
+  $$(".chat[data-id]", box).forEach((el) => el.onclick = () => {
+    if (!state.selecting) return openChat(el.dataset.id);
+    const id = el.dataset.id;
+    state.picked.has(id) ? state.picked.delete(id) : state.picked.add(id);
+    drawChatList();
+  });
 }
 async function openChat(id, refresh) {
   state.current = id;
@@ -394,6 +440,7 @@ async function openChat(id, refresh) {
       ${chat.mode === "bot"
         ? '<span class="pill ok"><span class="dot"></span>Отвечает бот</span><button class="btn" id="take">Взять диалог</button>'
         : '<span class="pill warn"><span class="dot"></span>Отвечаете вы</span><button class="btn ghost" id="release">Вернуть боту</button>'}
+      <button class="icon-btn" id="delChat" title="Удалить диалог"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>
     </div>
     ${chat.needs_attention || chat.handoff_reason ? `<div class="handoff"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>${esc(chat.handoff_reason || "Нужно внимание оператора")}</div>` : ""}
     <div id="msgs">${msgsHtml || '<div class="empty">Сообщений пока нет</div>'}</div>
@@ -405,6 +452,11 @@ async function openChat(id, refresh) {
   const nb = $("#msgs"); if (!refresh || atBottom) nb.scrollTop = nb.scrollHeight;
   $("#take")?.addEventListener("click", () => setMode("human"));
   $("#release")?.addEventListener("click", () => setMode("bot"));
+  $("#delChat").onclick = async () => {
+    if (!await ask("Удалить диалог?", `Переписка с ${chat.name || phone(chat.wa_id)} будет удалена из программы без возможности восстановления. У клиента в WhatsApp сообщения останутся.`, "Удалить", true)) return;
+    await api(`/chats/${encodeURIComponent(id)}`, { method:"DELETE" });
+    closeChat(); toast("Диалог удалён"); refreshChats();
+  };
   t.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } };
   $("#composer").onsubmit = async (e) => {
     e.preventDefault();
@@ -470,8 +522,16 @@ function renderNumbers(c, refresh) {
     const id = el.closest("[data-id]").dataset.id;
     if (el.dataset.act === "logout" && await ask("Отвязать номер?", "Бот перестанет отвечать с этого номера. Чтобы вернуть, снова отсканируйте QR-код.", "Отвязать"))
       await api(`/accounts/${encodeURIComponent(id)}/logout`, { method:"POST" }).catch((e) => toast(e.message));
-    if (el.dataset.act === "remove" && await ask("Удалить номер?", "Номер будет отвязан и удалён из программы. Переписка в панели сохранится.", "Удалить", true))
-      await api(`/accounts/${encodeURIComponent(id)}`, { method:"DELETE" });
+    if (el.dataset.act === "remove") {
+      const name = accNames[id] || id;
+      const n = state.chats.filter((ch) => ch.account_id === id).length;
+      if (await ask(`Удалить номер «${name}»?`, "Программа выйдет из WhatsApp на этом номере и удалит данные входа. Чтобы подключить номер снова, нужно будет заново отсканировать QR-код.", "Удалить номер", true, n ? `Удалить и диалоги этого номера (${n})` : "")) {
+        const r = await api(`/accounts/${encodeURIComponent(id)}${ask.checked ? "?chats=1" : ""}`, { method:"DELETE" });
+        if (r.deletedChats) closeChat();
+        toast(r.deletedChats ? `Номер и диалоги удалены (${r.deletedChats})` : "Номер удалён");
+        refreshChats();
+      }
+    }
     refreshStatus();
   });
   $("#addbtn") && ($("#addbtn").onclick = async () => {
@@ -720,6 +780,16 @@ function renderAbout(c) {
             <p class="hint" style="margin-top:14px">Программа сама проверяет обновления при запуске и каждые 4 часа и скачивает их в фоне. Установка происходит после вашего подтверждения или при следующем закрытии программы. Номера, ключи и переписка при обновлении сохраняются.</p>`
           : '<p class="hint" style="margin-top:8px">Запущено как сервер, без установщика. Чтобы обновить, скачайте новую версию из репозитория и перезапустите.</p>'}
         </div>
+        ${a.desktop ? `<div class="card">
+          <h2>Надёжность</h2>
+          <label class="row" style="margin:12px 0;cursor:pointer"><input type="checkbox" id="autostart" ${a.autostart ? "checked" : ""} style="width:18px;height:18px;accent-color:var(--accent)"><span>Запускать вместе с Windows (в свёрнутом виде)</span></label>
+          <ul class="hint" style="padding-left:18px;margin:0;font-size:13px;line-height:1.6">
+            <li>Пока программа открыта, компьютер не уходит в сон: связь с WhatsApp не рвётся.</li>
+            <li>При потере связи программа переподключается сама, без остановки.</li>
+            <li>Сессия каждого номера сохраняется в резервную копию. Если файл повредится, номер восстановится без нового QR-кода.</li>
+            <li>Если номер отключился или требует QR-кода, Windows покажет уведомление, а запись появится в «Журнале».</li>
+          </ul>
+        </div>` : ""}
         <div class="card">
           <h2>Правила работы бота</h2>
           <ul class="hint" style="padding-left:18px;margin:10px 0 0;font-size:13px;line-height:1.6">
@@ -734,6 +804,10 @@ function renderAbout(c) {
     </div>`;
   $("#check") && ($("#check").onclick = async () => { await api("/app/check", { method:"POST" }); toast("Проверяем…"); setTimeout(refreshApp, 800); });
   $("#install") && ($("#install").onclick = installUpdate);
+  $("#autostart") && ($("#autostart").onchange = async (e) => {
+    const r = await api("/app/autostart", { method:"POST", body: JSON.stringify({ on: e.target.checked }) });
+    toast(r.on ? "Автозапуск включён" : "Автозапуск выключен"); refreshApp();
+  });
 }
 
 // ---------- Журнал ----------
