@@ -5,6 +5,9 @@ import { config } from "./config.js";
 import * as settings from "./settings.js";
 import * as log from "./log.js";
 
+// Сколько ждём ответа ИИ: зависший сервис не должен навсегда блокировать чат
+const AI_TIMEOUT_MS = 45_000;
+
 // Клиент создаётся заново, если ключ поменяли в панели оператора
 let client = null;
 let clientKey = null;
@@ -12,7 +15,7 @@ function getClient() {
   const key = settings.get().anthropicApiKey;
   if (!key) throw new Error("Не задан ключ Anthropic API (панель оператора → Настройки или ANTHROPIC_API_KEY)");
   if (!client || key !== clientKey) {
-    client = new Anthropic({ apiKey: key });
+    client = new Anthropic({ apiKey: key, timeout: AI_TIMEOUT_MS, maxRetries: 1 });
     clientKey = key;
   }
   return client;
@@ -159,7 +162,7 @@ export function resetMetrics() {
  * json = true: ответ в формате {reply, handoff, handoff_reason}.
  * @returns {Promise<{text: string, refusal: boolean}>}
  */
-export async function complete({ system, messages, json = false, tag = "bot", maxTokens = 1500 }) {
+export async function complete({ system, messages, json = false, tag = "bot", maxTokens = 4000 }) {
   const st = stats[tag] ?? (stats[tag] = emptyStats());
   const started = Date.now();
   st.calls++;
@@ -221,16 +224,25 @@ async function openAICompatible(system, messages, json, maxTokens) {
   const gemini = /googleapis\.com/.test(url) && /^gemini-/.test(s.openaiModel);
   // Быстрый режим: Gemini по умолчанию «размышляет» несколько секунд перед ответом; для поддержки это не нужно
   if (s.fastAI && gemini) body.reasoning_effort = "low";
-  let res = await fetch(url, { method: "POST", headers, body: JSON.stringify(json ? { ...body, response_format: { type: "json_object" } } : body) });
+  // Локальная модель (Ollama) на процессоре может думать минутами: ей даём больше времени
+  const timeout = /\/\/(localhost|127\.0\.0\.1)[:/]/.test(url) ? 300_000 : AI_TIMEOUT_MS;
+  const post = (b) =>
+    fetch(url, { method: "POST", headers, body: JSON.stringify(b), signal: AbortSignal.timeout(timeout) }).catch((e) => {
+      throw e?.name === "TimeoutError" ? new Error(`ИИ не ответил за ${timeout / 1000} с (timeout)`) : e;
+    });
+  const withFormat = (b) => (json ? { ...b, response_format: { type: "json_object" } } : b);
+  let res = await post(withFormat(body));
   if (res.status === 400 && body.reasoning_effort) {
     // Модель не поддерживает настройку размышлений: без неё
     const { reasoning_effort, ...rest } = body;
     body = rest;
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(json ? { ...body, response_format: { type: "json_object" } } : body) });
+    res = await post(withFormat(body));
   }
+  let format = json;
   if (json && res.status === 400) {
     // Некоторые модели не поддерживают response_format: пробуем без него
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    format = false;
+    res = await post(body);
   }
   const liteFallback = gemini && /flash/.test(s.openaiModel) && !/lite/.test(s.openaiModel);
   // Бесплатные тарифы часто отвечают 429 «слишком много запросов» или 503 «перегружено»: подождём и попробуем ещё до 2 раз.
@@ -238,13 +250,13 @@ async function openAICompatible(system, messages, json, maxTokens) {
   for (let attempt = 0; (res.status === 429 || (res.status === 503 && !liteFallback)) && attempt < 2; attempt++) {
     const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || (attempt + 1) * 2000, 15000);
     await new Promise((r) => setTimeout(r, wait));
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    res = await post(format ? withFormat(body) : body);
   }
   // Gemini часто перегружен: пробуем облегчённую модель
   if (res.status === 503 && liteFallback) {
     const lite = "gemini-flash-lite-latest"; // псевдоним Google, всегда указывает на актуальную облегчённую модель
     log.warn("ai", `${s.openaiModel} перегружена, пробуем ${lite}`);
-    res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ ...body, model: lite }) });
+    res = await post({ ...(format ? withFormat(body) : body), model: lite });
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -254,6 +266,10 @@ async function openAICompatible(system, messages, json, maxTokens) {
     throw err;
   }
   const text = (data.choices?.[0]?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  if (json && data.choices?.[0]?.finish_reason === "length") {
+    // Ответ оборвался на середине: такой текст клиенту отправлять нельзя
+    throw new Error(`Ответ ИИ обрезан по длине (finish_reason: length): ${text.slice(0, 120)}`);
+  }
   if (!text) {
     // Пустой ответ считаем ошибкой, чтобы причина была видна в панели, а не «передано без причины»
     const finish = data.choices?.[0]?.finish_reason;
@@ -281,7 +297,18 @@ export function parseLooseJson(text) {
       // ниже
     }
   }
-  return { reply: clean.replace(/```[a-z]*|```/g, "").trim(), handoff: false, handoff_reason: "" };
+  const plain = clean.replace(/```[a-z]*|```/g, "").trim();
+  if (/^\{/.test(plain) || /"reply"\s*:/.test(plain)) {
+    // Похоже на испорченный JSON: достаём текст ответа, если он целый, иначе считаем ошибкой (клиенту не уходит мусор)
+    const m = plain.match(/"reply"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (m) {
+      let reply;
+      try { reply = JSON.parse(`"${m[1]}"`); } catch { reply = m[1]; }
+      if (reply.trim()) return { reply, handoff: /"handoff"\s*:\s*true/.test(plain), handoff_reason: "" };
+    }
+    throw new Error(`ИИ вернул неполный ответ: ${plain.slice(0, 120)}`);
+  }
+  return { reply: plain, handoff: false, handoff_reason: "" };
 }
 
 const MOCK_CUSTOMER = ["Здравствуйте, у меня не работает интернет", "Роутер перезагрузил, не помогло", "А когда починят?", "Вы вообще человек?", "Спасибо", "Как сменить пароль?"];

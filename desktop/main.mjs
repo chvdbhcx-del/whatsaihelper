@@ -1,6 +1,6 @@
 // Программа для Windows: запускает бота и открывает панель оператора в окне.
 // Терминал и npm не нужны: вход в WhatsApp по QR и ключ ИИ настраиваются в окне.
-import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification, powerSaveBlocker, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification, powerSaveBlocker, safeStorage, shell } from "electron";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -13,7 +13,11 @@ const { autoUpdater } = updaterPkg;
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TITLE = "ИИ-ассистент WhatsApp";
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// Вторая копия программы сразу завершается: иначе она подключила бы те же номера и WhatsApp выбил бы сессию
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+  process.exit(0);
+}
 
 let win = null;
 let password = "";
@@ -132,7 +136,9 @@ function checkUpdates() {
   autoUpdater.checkForUpdates().catch(() => {});
 }
 
-app.on("login", (event, _wc, _details, _authInfo, callback) => {
+// Пароль панели отдаём только своей панели на этом компьютере
+app.on("login", (event, _wc, _details, authInfo, callback) => {
+  if (authInfo.host !== "127.0.0.1") return;
   event.preventDefault();
   callback("admin", password);
 });
@@ -153,6 +159,14 @@ app.whenReady().then(async () => {
   password = folders.password;
   if (!(await firstRunWarning(folders.dataDir))) return app.quit();
 
+  // Ключи ИИ шифруются средствами Windows (DPAPI): из файла настроек их не прочитать на другом компьютере или под другим пользователем
+  if (safeStorage.isEncryptionAvailable()) {
+    globalThis.__secrets = {
+      encrypt: (t) => safeStorage.encryptString(t).toString("base64"),
+      decrypt: (b) => safeStorage.decryptString(Buffer.from(b, "base64")),
+    };
+  }
+
   const port = await freePort(37373);
   Object.assign(process.env, {
     PORT: String(port),
@@ -168,14 +182,22 @@ app.whenReady().then(async () => {
     await server.ready;
     const logm = await import(pathToFileURL(path.join(ROOT, "src", "log.js")).href);
     ulog = (level, msg) => logm.log(level, "update", msg);
-    // Уведомление Windows, если номер отключился или требует QR-кода (не чаще раза в минуту на одно и то же)
+    // Уведомления Windows (не чаще раза в минуту на одно и то же): номер отключился или требует QR-кода,
+    // бот передал диалог оператору, ИИ не отвечает
     const shown = new Map();
+    const titleOf = (e) => {
+      if (e.category === "whatsapp" && e.level !== "info") return e.level === "error" ? "WhatsApp: нужна помощь" : "WhatsApp: проблема с подключением";
+      if (e.category === "message" && /^Передано оператору/.test(e.message)) return "Клиент ждёт оператора";
+      if (e.category === "ai" && e.level === "error" && /^Ошибка ИИ/.test(e.message)) return "ИИ не отвечает: клиенты ждут оператора";
+      return null;
+    };
     logm.onEntry((e) => {
-      if (e.category !== "whatsapp" || e.level === "info" || !Notification.isSupported()) return;
-      const key = e.message.replace(/\d+/g, "#");
+      const title = titleOf(e);
+      if (!title || !Notification.isSupported()) return;
+      const key = e.category === "message" ? "handoff" : e.category === "ai" ? "ai-error" : e.message.replace(/\d+/g, "#");
       if (Date.now() - (shown.get(key) ?? 0) < 60_000) return;
       shown.set(key, Date.now());
-      const n = new Notification({ title: e.level === "error" ? "WhatsApp: нужна помощь" : "WhatsApp: проблема с подключением", body: e.message.slice(0, 200) });
+      const n = new Notification({ title, body: e.message.slice(0, 200) });
       n.on("click", () => { if (win) { win.show(); win.focus(); } });
       n.show();
     });
@@ -200,9 +222,16 @@ app.whenReady().then(async () => {
   win.webContents.setZoomFactor(1);
   win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   win.on("page-title-updated", (e) => e.preventDefault());
+  const isHttp = (u) => /^https?:\/\//i.test(u);
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isHttp(url)) shell.openExternal(url);
     return { action: "deny" };
+  });
+  // Окно программы показывает только панель: чужие адреса открываются в браузере
+  win.webContents.on("will-navigate", (e, url) => {
+    if (url.startsWith(`http://127.0.0.1:${port}/`)) return;
+    e.preventDefault();
+    if (isHttp(url)) shell.openExternal(url);
   });
   win.on("close", (e) => {
     if (installing) return;
