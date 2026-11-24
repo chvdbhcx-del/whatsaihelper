@@ -41,7 +41,7 @@ function schedule(waId) {
     setTimeout(() => {
       timers.delete(waId);
       respond(waId).catch((e) => log.error("bot", `Сбой обработки ${log.maskPhone(waId)}: ${e.stack || e.message}`));
-    }, config.debounceMs)
+    }, settings.get().replyDelaySeconds * 1000)
   );
 }
 

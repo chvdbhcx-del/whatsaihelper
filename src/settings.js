@@ -34,6 +34,10 @@ export function get() {
     openaiApiKey: current.openaiApiKey || process.env.OPENAI_API_KEY || "",
     openaiModel: current.openaiModel ?? process.env.OPENAI_MODEL ?? "",
     dailyLimit: Number.isFinite(current.dailyLimit) ? current.dailyLimit : config.dailyReplyLimit,
+    // Пауза перед ответом: бот ждёт, не допишет ли клиент ещё сообщение (настройка из панели, иначе переменная окружения)
+    replyDelaySeconds: Number.isFinite(current.replyDelaySeconds) ? current.replyDelaySeconds : process.env.REPLY_DEBOUNCE_SECONDS !== undefined ? Number(process.env.REPLY_DEBOUNCE_SECONDS) : 2,
+    // Быстрый режим: модели, которые «размышляют» перед ответом, отвечают без долгих размышлений
+    fastAI: current.fastAI ?? true,
   };
 }
 
@@ -108,6 +112,11 @@ export function update(patch) {
     const n = Math.floor(Number(patch.dailyLimit));
     if (Number.isFinite(n) && n >= 0) next.dailyLimit = n;
   }
+  if (patch.replyDelaySeconds !== undefined) {
+    const n = Number(patch.replyDelaySeconds);
+    if (Number.isFinite(n) && n >= 0 && n <= 30) next.replyDelaySeconds = n;
+  }
+  if (typeof patch.fastAI === "boolean") next.fastAI = patch.fastAI;
   save(next);
   return get();
 }

@@ -360,6 +360,10 @@
   #toast.bad { border-color:var(--line); color:var(--bad); }
   #toast.bad::before { background:var(--bad); }
   .zoom-ctl { display:flex; gap:6px; align-items:center; }
+  .seg { display:inline-flex; width:fit-content; background:var(--panel2); border:1px solid var(--line); border-radius:var(--radius); padding:3px; gap:2px; margin:6px 0 8px; }
+  .seg button { border:0; background:none; color:var(--muted); font:inherit; font-size:13px; font-weight:600; height:28px; padding:0 14px; border-radius:7px; cursor:pointer; }
+  .seg button.active { background:var(--panel); color:var(--text); box-shadow:var(--shadow); }
+  .speed-card .hint { line-height:1.45; }
   .zoom-ctl select { width:96px; height:30px; padding:0 8px; }
   .zoom-ctl .btn.sm { min-width:30px; font-size:15px; }
   .zoom-ctl #zoomReset { font-size:12.5px; margin-left:auto; }
@@ -791,7 +795,32 @@ function renderAI(c) {
         <div class="row between"><span class="hint" id="aiState"></span><span class="row"><button class="btn ghost" type="button" id="aiTest">Проверить</button><button class="btn">Сохранить</button></span></div>
         <div id="aiTestResult" style="margin-top:12px"></div>
       </form>
+      <div class="card speed-card" style="max-width:640px;margin-top:16px">
+        <h2>Скорость ответа</h2>
+        <div class="field" style="margin-top:12px">
+          <label>Пауза перед ответом</label>
+          <div class="seg" id="delaySeg">${[0, 1, 2, 4, 8].map((v) => `<button type="button" data-v="${v}" class="${Number(s.ai.replyDelaySeconds) === v ? "active" : ""}">${v ? v + " с" : "Сразу"}</button>`).join("")}</div>
+          <div class="hint" id="delayHint"></div>
+        </div>
+        <label class="row" style="gap:10px;cursor:pointer;align-items:flex-start;margin-top:4px"><input type="checkbox" id="fastAI" ${s.ai.fastAI ? "checked" : ""} style="width:18px;height:18px;margin-top:1px;accent-color:var(--accent)"><span><b style="font-weight:600">Быстрый режим ИИ</b><br><span class="hint">Модель отвечает без долгих «размышлений». Для Gemini ответ приходит заметно быстрее, качество для вопросов поддержки почти не меняется. Если Gemini перегружен, программа сразу переходит на облегчённую модель, без ожидания.</span></span></label>
+      </div>
     </div>`;
+  const delayHint = (v) => {
+    $("#delayHint").textContent = v === 0
+      ? "Бот отвечает сразу на каждое сообщение. Если клиент пишет несколькими сообщениями подряд, ответов может быть несколько, а мгновенные ответы выглядят для WhatsApp менее естественно."
+      : `Бот ждёт ${v} с, не допишет ли клиент ещё, и отвечает на всё одним сообщением. Ко времени паузы добавляется время, за которое ИИ готовит ответ.`;
+  };
+  delayHint(Number(s.ai.replyDelaySeconds));
+  $$("#delaySeg button").forEach((b) => b.onclick = async () => {
+    const v = Number(b.dataset.v);
+    await api("/settings", { method:"POST", body: JSON.stringify({ replyDelaySeconds: v }) });
+    $$("#delaySeg button").forEach((x) => x.classList.toggle("active", x === b)); delayHint(v);
+    s.ai.replyDelaySeconds = v; toast(v ? `Пауза перед ответом: ${v} с` : "Бот отвечает сразу");
+  });
+  $("#fastAI").onchange = async (e) => {
+    await api("/settings", { method:"POST", body: JSON.stringify({ fastAI: e.target.checked }) });
+    s.ai.fastAI = e.target.checked; toast(e.target.checked ? "Быстрый режим ИИ включён" : "Быстрый режим ИИ выключен");
+  };
   const keySetFor = (k) => k === "anthropic" ? s.ai.anthropicKeySet : s.ai.openaiKeySet;
   const show = (k, fill) => {
     sel = k; const p = PRESETS[k];

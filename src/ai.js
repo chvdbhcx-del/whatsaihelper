@@ -217,20 +217,31 @@ async function openAICompatible(system, messages, json, maxTokens) {
   const sys = json
     ? `${system}\n\nОтвечай строго одним JSON-объектом без пояснений, например: {"reply": "...", "handoff": false, "handoff_reason": ""}`
     : system;
-  const body = { model: s.openaiModel, messages: [{ role: "system", content: sys }, ...messages], temperature: json ? 0.4 : 0.9, max_tokens: maxTokens };
+  let body = { model: s.openaiModel, messages: [{ role: "system", content: sys }, ...messages], temperature: json ? 0.4 : 0.9, max_tokens: maxTokens };
+  const gemini = /googleapis\.com/.test(url) && /^gemini-/.test(s.openaiModel);
+  // Быстрый режим: Gemini по умолчанию «размышляет» несколько секунд перед ответом; для поддержки это не нужно
+  if (s.fastAI && gemini) body.reasoning_effort = "low";
   let res = await fetch(url, { method: "POST", headers, body: JSON.stringify(json ? { ...body, response_format: { type: "json_object" } } : body) });
+  if (res.status === 400 && body.reasoning_effort) {
+    // Модель не поддерживает настройку размышлений: без неё
+    const { reasoning_effort, ...rest } = body;
+    body = rest;
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify(json ? { ...body, response_format: { type: "json_object" } } : body) });
+  }
   if (json && res.status === 400) {
     // Некоторые модели не поддерживают response_format: пробуем без него
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   }
-  // Бесплатные тарифы часто отвечают 429 «слишком много запросов» или 503 «перегружено»: подождём и попробуем ещё до 2 раз
-  for (let attempt = 0; (res.status === 429 || res.status === 503) && attempt < 2; attempt++) {
-    const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || (attempt + 1) * 3000, 20000);
+  const liteFallback = gemini && /flash/.test(s.openaiModel) && !/lite/.test(s.openaiModel);
+  // Бесплатные тарифы часто отвечают 429 «слишком много запросов» или 503 «перегружено»: подождём и попробуем ещё до 2 раз.
+  // Если Gemini перегружен (503), не ждём, а сразу переходим на облегчённую модель
+  for (let attempt = 0; (res.status === 429 || (res.status === 503 && !liteFallback)) && attempt < 2; attempt++) {
+    const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || (attempt + 1) * 2000, 15000);
     await new Promise((r) => setTimeout(r, wait));
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   }
   // Gemini часто перегружен: пробуем облегчённую модель
-  if (res.status === 503 && /googleapis\.com/.test(url) && /^gemini-.*flash/.test(s.openaiModel) && !/lite/.test(s.openaiModel)) {
+  if (res.status === 503 && liteFallback) {
     const lite = "gemini-flash-lite-latest"; // псевдоним Google, всегда указывает на актуальную облегчённую модель
     log.warn("ai", `${s.openaiModel} перегружена, пробуем ${lite}`);
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ ...body, model: lite }) });

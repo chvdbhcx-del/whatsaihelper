@@ -129,6 +129,8 @@ admin.get("/api/status", (_req, res) => {
       openaiBaseUrl: s.openaiBaseUrl,
       openaiModel: s.openaiModel,
       openaiKeySet: !!s.openaiApiKey,
+      replyDelaySeconds: s.replyDelaySeconds,
+      fastAI: s.fastAI,
     },
     aiMock: config.ai.mock,
   });
@@ -136,6 +138,7 @@ admin.get("/api/status", (_req, res) => {
 admin.post("/api/settings", (req, res) => {
   const s = settings.update(req.body ?? {});
   const b = req.body ?? {};
+  if (b.replyDelaySeconds !== undefined || b.fastAI !== undefined) log.info("app", `Скорость ответа: пауза ${s.replyDelaySeconds} с, быстрый режим ИИ ${s.fastAI ? "включён" : "выключен"}`);
   if (b.aiProvider) log.info("app", `Настройки ИИ: ${b.aiProvider === "anthropic" ? "Claude" : `${s.openaiModel || "модель не задана"} (${s.openaiBaseUrl || "адрес не задан"})`}${b.anthropicApiKey || b.openaiApiKey ? ", ключ обновлён" : ""}`);
   res.json({ ok: true, dailyLimit: s.dailyLimit });
 });
