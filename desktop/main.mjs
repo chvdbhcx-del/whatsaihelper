@@ -1,6 +1,6 @@
 // Программа для Windows: запускает бота и открывает панель оператора в окне.
 // Терминал и npm не нужны: вход в WhatsApp по QR и ключ ИИ настраиваются в окне.
-import { app, BrowserWindow, dialog, nativeTheme, Notification, powerSaveBlocker, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeTheme, Notification, powerSaveBlocker, shell } from "electron";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -194,7 +194,11 @@ app.whenReady().then(async () => {
     fs.writeFileSync(autoFlag, "1");
   }
 
+  // Без стандартного меню: масштаб (Ctrl +/−/0, Ctrl + колесо) делает сама панель и запоминает его
+  Menu.setApplicationMenu(null);
   win = new BrowserWindow({ width: 1320, height: 860, minWidth: 900, minHeight: 600, title: TITLE, autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1412" : "#f3f5f4" });
+  win.webContents.setZoomFactor(1);
+  win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => {});
   win.on("page-title-updated", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);

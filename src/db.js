@@ -62,7 +62,8 @@ export function getChat(waId) {
 export function listChats() {
   return db
     .prepare(
-      `SELECT c.*, (SELECT text FROM messages m WHERE m.wa_id = c.wa_id ORDER BY id DESC LIMIT 1) AS last_text
+      `SELECT c.*, (SELECT text FROM messages m WHERE m.wa_id = c.wa_id AND m.role <> 'system' ORDER BY id DESC LIMIT 1) AS last_text,
+              (SELECT role FROM messages m WHERE m.wa_id = c.wa_id AND m.role <> 'system' ORDER BY id DESC LIMIT 1) AS last_role
        FROM chats c ORDER BY c.needs_attention DESC, c.updated_at DESC LIMIT 500`
     )
     .all();
