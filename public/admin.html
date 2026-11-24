@@ -463,7 +463,7 @@ const PRESETS = {
   ollama:     { title:"Ollama", sub:"на этом компьютере", free:true, url:"http://localhost:11434/v1", model:"qwen3:8b", hint:"Установите ollama.com, затем в терминале: ollama pull qwen3:8b. Ключ не нужен, нужен компьютер от 16 ГБ памяти." },
   openrouter: { title:"OpenRouter", sub:"модели с пометкой :free", free:true, url:"https://openrouter.ai/api/v1", model:"", hint:"Ключ: openrouter.ai/keys. Бесплатные модели: openrouter.ai/models?q=free" },
   groq:       { title:"Groq", sub:"бесплатный тариф", free:true, url:"https://api.groq.com/openai/v1", model:"llama-3.3-70b-versatile", hint:"Ключ: console.groq.com/keys" },
-  gemini:     { title:"Google Gemini", sub:"бесплатный тариф", free:true, url:"https://generativelanguage.googleapis.com/v1beta/openai", model:"gemini-3.5-flash", hint:"Ключ: aistudio.google.com → Get API key. Модель gemini-3.5-flash, при перегрузке gemini-3.5-flash-lite. С российских IP недоступен." },
+  gemini:     { title:"Google Gemini", sub:"бесплатный тариф", free:true, url:"https://generativelanguage.googleapis.com/v1beta/openai", model:"gemini-3.5-flash", hint:"Ключ: aistudio.google.com → Get API key. После ввода ключа список моделей подгрузится сам. С российских IP недоступен." },
   custom:     { title:"Другой сервис", sub:"API в формате OpenAI", free:false, url:"", model:"", hint:"Любой сервис с методом /chat/completions." },
 };
 function guessPreset(ai) {
@@ -482,9 +482,15 @@ function renderAI(c) {
       <form class="card" id="aiForm" style="max-width:640px">
         <div id="oaFields">
           <div class="field"><label for="baseurl">Адрес API</label><input class="input" id="baseurl" placeholder="https://…/v1"></div>
-          <div class="field"><label for="model">Модель</label><input class="input" id="model" placeholder="Название модели"></div>
         </div>
         <div class="field"><label for="aikey">Ключ API</label><input class="input" id="aikey" type="password" autocomplete="off"></div>
+        <div id="modelFields">
+          <div class="field"><label for="modelList">Модель</label>
+            <div class="row"><select class="input" id="modelList"></select><button class="btn ghost sm" type="button" id="modelsReload" title="Запросить список моделей у сервиса">Обновить</button></div>
+            <input class="input" id="model" placeholder="Название модели" style="margin-top:6px">
+            <div class="hint" id="modelsState"></div>
+          </div>
+        </div>
         <div class="hint" id="presetHint" style="margin-bottom:14px"></div>
         <div class="row between"><span class="hint" id="aiState"></span><span class="row"><button class="btn ghost" type="button" id="aiTest">Проверить</button><button class="btn">Сохранить</button></span></div>
         <div id="aiTestResult" style="margin-top:12px"></div>
@@ -495,10 +501,55 @@ function renderAI(c) {
     sel = k; const p = PRESETS[k];
     $$(".prov", c).forEach((b) => b.classList.toggle("active", b.dataset.p === k));
     $("#oaFields").style.display = k === "anthropic" ? "none" : "block";
+    $("#modelFields").style.display = k === "anthropic" ? "none" : "block";
     $("#aikey").placeholder = k === "ollama" ? "Не нужен" : keySetFor(k) && cur === k ? "Ключ сохранён. Введите новый, чтобы заменить" : k === "anthropic" ? "sk-ant-…" : "Вставьте ключ";
     $("#presetHint").textContent = p.hint;
     if (fill) { $("#baseurl").value = p.url; $("#model").value = p.model; }
+    resetModels();
+    if (k !== "anthropic" && (k === "ollama" || (keySetFor(k) && cur === k))) loadModels(!fill);
   };
+
+  // ---- Список моделей по ключу ----
+  let modelsReq = 0;
+  function resetModels() {
+    $("#modelList").innerHTML = '<option value="">Введите ключ, чтобы увидеть доступные модели</option>';
+    $("#modelList").disabled = true; $("#modelsState").textContent = "";
+    $("#model").style.display = "block";
+  }
+  async function loadModels(keepCurrent) {
+    const baseUrl = $("#baseurl").value.trim(); if (!baseUrl) return;
+    const req = ++modelsReq;
+    $("#modelsState").textContent = "Запрашиваем список моделей…";
+    let r; try { r = await api("/ai/models", { method:"POST", body: JSON.stringify({ baseUrl, apiKey: $("#aikey").value.trim() }) }); }
+    catch (err) { r = { ok:false, error: err.message }; }
+    if (req !== modelsReq) return; // пользователь уже поменял сервис
+    if (!r.ok || !r.models.length) {
+      resetModels();
+      $("#modelsState").innerHTML = r.ok ? "Сервис не вернул ни одной модели. Впишите название вручную."
+        : `<span style="color:var(--bad)">Список не получен.</span> ${esc(r.hint || "")} <span style="word-break:break-word">${esc(r.error || "")}</span>`;
+      return;
+    }
+    const current = $("#model").value.trim();
+    const pick = keepCurrent && r.models.some((m) => m.id === current) ? current : r.recommended;
+    const list = [...r.models.filter((m) => m.recommended), ...r.models.filter((m) => !m.recommended)];
+    $("#modelList").innerHTML = list.map((m) => `<option value="${esc(m.id)}">${esc(m.id)}${m.recommended ? "  (рекомендуем)" : ""}${m.free && !r.onlyFree ? "  (бесплатно)" : ""}</option>`).join("")
+      + '<option value="__manual">Другая модель (ввести вручную)…</option>';
+    $("#modelList").disabled = false;
+    $("#modelList").value = pick; $("#model").value = pick; $("#model").style.display = "none";
+    const lost = keepCurrent && current && current !== pick;
+    $("#modelsState").innerHTML = `Доступно моделей: ${r.models.length}${r.onlyFree ? " (показаны только бесплатные)" : ""}.`
+      + (lost ? ` <span style="color:var(--warn)">Модель ${esc(current)} недоступна для этого ключа, выбрана ${esc(pick)}. Нажмите «Сохранить».</span>` : "");
+  }
+  $("#modelList").onchange = (e) => {
+    const v = e.target.value;
+    if (v === "__manual") { $("#model").style.display = "block"; $("#model").value = ""; $("#model").focus(); }
+    else { $("#model").value = v; $("#model").style.display = "none"; }
+  };
+  $("#modelsReload").onclick = () => loadModels(true);
+  let keyTimer;
+  $("#aikey").addEventListener("input", () => { clearTimeout(keyTimer); if (sel !== "anthropic" && $("#aikey").value.trim().length > 10) keyTimer = setTimeout(() => loadModels(true), 600); });
+  $("#baseurl").addEventListener("change", () => loadModels(true));
+
   $("#baseurl").value = s.ai.openaiBaseUrl || ""; $("#model").value = s.ai.openaiModel || "";
   show(sel, false);
   $("#aiState").textContent = `Сейчас: ${PRESETS[cur].title}${cur !== "anthropic" && s.ai.openaiModel ? ", " + s.ai.openaiModel : ""}${keySetFor(cur) ? ", ключ сохранён" : cur === "ollama" ? "" : ", ключ не задан"}`;

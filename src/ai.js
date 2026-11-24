@@ -213,9 +213,9 @@ async function openAICompatible(system, messages, json, maxTokens) {
     await new Promise((r) => setTimeout(r, wait));
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   }
-  // Gemini часто перегружен: пробуем облегчённую версию той же модели (gemini-3.5-flash → gemini-3.5-flash-lite)
-  if (res.status === 503 && /googleapis\.com/.test(url) && /^gemini-[\d.]+-flash$/.test(s.openaiModel)) {
-    const lite = `${s.openaiModel}-lite`;
+  // Gemini часто перегружен: пробуем облегчённую модель
+  if (res.status === 503 && /googleapis\.com/.test(url) && /^gemini-.*flash/.test(s.openaiModel) && !/lite/.test(s.openaiModel)) {
+    const lite = "gemini-flash-lite-latest"; // псевдоним Google, всегда указывает на актуальную облегчённую модель
     log.warn("ai", `${s.openaiModel} перегружена, пробуем ${lite}`);
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ ...body, model: lite }) });
   }
@@ -307,4 +307,59 @@ export function explainAIError(m) {
   if (/location|region|country/i.test(m)) return "Сервис недоступен из вашей страны.";
   if (/fetch failed|ECONNREFUSED|ENOTFOUND|timeout/i.test(m)) return "Нет связи с сервисом. Проверьте интернет и адрес API.";
   return "";
+}
+
+// ---------- Список моделей по ключу ----------
+
+const NOT_CHAT = /embed|tts|image|audio|whisper|transcri|speech|moderation|guard|realtime|live|native-audio|veo|imagen|lyria|aqa|robotics|computer-use|omni|-exp-|learnlm/i;
+
+/** Какую модель предложить по умолчанию из списка. */
+function recommend(base, ids) {
+  if (/googleapis\.com/.test(base)) {
+    const ver = (id) => Number((id.match(/^gemini-([\d.]+)-flash$/) || [])[1] || 0);
+    const stable = ids.filter((id) => ver(id) > 0).sort((a, b) => ver(b) - ver(a));
+    return stable[0] || ids.find((id) => id === "gemini-flash-latest") || ids[0];
+  }
+  if (/groq\.com/.test(base)) return ids.find((id) => id === "llama-3.3-70b-versatile") || ids[0];
+  if (/openrouter\.ai/.test(base)) return ids.find((id) => id.endsWith(":free")) || ids[0];
+  return ids[0];
+}
+
+/**
+ * Модели, доступные по этому ключу (OpenAI-совместимый метод GET /models).
+ * Сохранённый ключ используется, только если адрес совпадает с сохранённым: на чужой адрес он не уходит.
+ */
+export async function listModels({ baseUrl, apiKey } = {}) {
+  const s = settings.get();
+  const base = String(baseUrl || s.openaiBaseUrl || "").trim().replace(/\/+$/, "");
+  if (!base) return { ok: false, error: "Не задан адрес API" };
+  const key = String(apiKey || "").trim() || (base === s.openaiBaseUrl.replace(/\/+$/, "") ? s.openaiApiKey : "");
+  try {
+    const res = await fetch(`${base}/models`, { headers: key ? { Authorization: `Bearer ${key}` } : {}, signal: AbortSignal.timeout(20000) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const e = Array.isArray(data) ? data[0]?.error : data.error;
+      const message = `${res.status} ${typeof e?.message === "string" ? e.message : JSON.stringify(e ?? data)}`.slice(0, 300);
+      log.warn("ai", `Список моделей не получен: ${message}`);
+      return { ok: false, error: message, hint: explainAIError(message) };
+    }
+    let models = (data.data ?? data.models ?? [])
+      .map((m) => ({ id: String(m.id ?? m.name ?? "").replace(/^models\//, ""), free: /:free$/.test(m.id ?? "") || (m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0) }))
+      .filter((m) => m.id && !NOT_CHAT.test(m.id));
+    if (/googleapis\.com/.test(base)) {
+      // только текстовые Gemini/Gemma; серия 2.x отключена Google для новых ключей
+      models = models.filter((m) => /^(gemini|gemma)-/.test(m.id) && !/^gemini-2\.|nano-banana|-tts|-image/.test(m.id));
+    }
+    const openrouter = /openrouter\.ai/.test(base);
+    if (openrouter) models = models.filter((m) => m.free); // сотни платных моделей: показываем только бесплатные
+    models.sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true })).reverse();
+    const ids = models.map((m) => m.id);
+    const recommended = recommend(base, ids);
+    log.info("ai", `Получен список моделей: ${ids.length}, рекомендуем ${recommended || "—"}`);
+    return { ok: true, models: models.map((m) => ({ ...m, recommended: m.id === recommended })), recommended, onlyFree: openrouter };
+  } catch (err) {
+    const message = String(err.message ?? err);
+    log.warn("ai", `Список моделей не получен: ${message}`);
+    return { ok: false, error: message, hint: explainAIError(message) };
+  }
 }

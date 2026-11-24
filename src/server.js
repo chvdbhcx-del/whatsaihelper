@@ -6,7 +6,7 @@ import { config, ROOT } from "./config.js";
 import * as db from "./db.js";
 import * as wa from "./whatsapp.js";
 import { onIncoming, operatorSend, usageToday } from "./bot.js";
-import { metrics, resetMetrics, testAI } from "./ai.js";
+import { metrics, resetMetrics, testAI, listModels } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
 import * as log from "./log.js";
@@ -162,6 +162,7 @@ admin.post("/api/app/install", (_req, res) => {
 });
 
 admin.post("/api/ai/test", async (_req, res) => res.json(await testAI()));
+admin.post("/api/ai/models", async (req, res) => res.json(await listModels(req.body ?? {})));
 
 // ---------- Журнал ----------
 admin.get("/api/logs", (req, res) => {
