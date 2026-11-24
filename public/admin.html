@@ -378,6 +378,11 @@
   #botTask .bt-close { width:24px; height:24px; font-size:16px; }
   #botTask .bt-row .input { height:32px; font-size:13px; padding:0 10px; }
   #botTask .bt-row .btn { height:32px; }
+
+  /* Кнопка «Ответить ботом» не пропадает, пока курсор идёт к ней: мостик над промежутком и задержка перед скрытием */
+  .m.customer .bot-reply-btn { display:inline-flex; visibility:hidden; opacity:0; transition:opacity .15s ease .6s, visibility 0s linear .75s; }
+  .m.customer:hover .bot-reply-btn, .m.customer.picked .bot-reply-btn, .m.customer .bot-reply-btn:focus-visible { visibility:visible; opacity:1; transition-delay:0s, 0s; }
+  .bot-reply-btn::before { content:""; position:absolute; top:-12px; bottom:-12px; left:-16px; right:-8px; }
 </style>
 <script>
   // Тема применяется до отрисовки, чтобы не мигало
