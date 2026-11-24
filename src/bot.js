@@ -3,6 +3,7 @@ import * as wa from "./whatsapp.js";
 import { generateReply } from "./ai.js";
 import { config } from "./config.js";
 import * as settings from "./settings.js";
+import * as log from "./log.js";
 
 function startOfToday() {
   const d = new Date();
@@ -28,6 +29,7 @@ export function onIncoming(msg) {
   db.upsertChat(chatId, msg.name, account);
   const isNew = db.addMessage(chatId, "customer", msg.text, msg.id);
   if (!isNew) return; // повторная доставка вебхука
+  log.info("message", `Входящее от ${log.maskPhone(chatId)} (${msg.text.length} симв.), номер «${account}»`);
   wa.markRead(msg.id, chatId);
   schedule(chatId);
 }
@@ -38,7 +40,7 @@ function schedule(waId) {
     waId,
     setTimeout(() => {
       timers.delete(waId);
-      respond(waId).catch((e) => console.error("respond:", e));
+      respond(waId).catch((e) => log.error("bot", `Сбой обработки ${log.maskPhone(waId)}: ${e.stack || e.message}`));
     }, config.debounceMs)
   );
 }
@@ -59,6 +61,7 @@ async function respond(waId) {
   if (!chat) return;
   if (!botMayAnswer(chat)) {
     db.markAttention(waId); // клиент ждёт ответа оператора
+    log.info("message", `${log.maskPhone(waId)}: диалог у оператора, бот молчит`);
     return;
   }
 
@@ -69,7 +72,7 @@ async function respond(waId) {
     db.markAttention(waId);
     const note = `Дневной лимит ответов бота (${limit}) исчерпан, клиент ждёт оператора`;
     if (db.getMessages(waId, 1).at(-1)?.text !== note) db.addMessage(waId, "system", note);
-    console.log(`[limit] ${sent}/${limit}, ${waId} ждёт оператора`);
+    log.warn("limit", `Лимит ${sent}/${limit} на номере «${chat.account_id}» исчерпан: ${log.maskPhone(waId)} ждёт оператора`);
     return;
   }
 
@@ -77,23 +80,29 @@ async function respond(waId) {
   try {
     const history = db.getMessages(waId, config.ai.history + 10);
     if (history.findLast((m) => m.role !== "system")?.role !== "customer") return; // уже ответили
+    const started = Date.now();
     const result = await generateReply(history, chat.account_id);
     if (!result) return;
+    log.info("ai", `Ответ ИИ для ${log.maskPhone(waId)} за ${((Date.now() - started) / 1000).toFixed(1)} с${result.handoff ? ", с передачей оператору" : ""}`);
 
     // Пока модель думала, оператор мог перехватить чат
     const fresh = db.getChat(waId);
-    if (!botMayAnswer(fresh)) return;
+    if (!botMayAnswer(fresh)) {
+      log.info("message", `${log.maskPhone(waId)}: оператор взял диалог, пока ИИ думал; ответ не отправлен`);
+      return;
+    }
 
     await wa.sendText(waId, result.reply);
     db.addMessage(waId, "bot", result.reply);
+    log.info("message", `Ответ бота отправлен ${log.maskPhone(waId)} (${sent + 1}/${limit || "∞"} за сегодня)`);
 
     if (result.handoff) {
       db.setMode(waId, "human", { reason: result.handoff_reason || "Бот передал диалог" });
       db.addMessage(waId, "system", `Передано оператору: ${result.handoff_reason || "без причины"}`);
-      console.log(`[handoff] ${waId}: ${result.handoff_reason}`);
+      log.info("message", `Передано оператору ${log.maskPhone(waId)}: ${result.handoff_reason || "без причины"}`);
     }
   } catch (e) {
-    console.error(`Не удалось ответить ${waId}:`, e.message);
+    log.error("message", `Не удалось ответить ${log.maskPhone(waId)}: ${e.message}`);
     db.setMode(waId, "human", { reason: `Ошибка отправки: ${e.message.slice(0, 200)}` });
   } finally {
     busy.delete(waId);
@@ -107,5 +116,6 @@ export async function operatorSend(waId, text) {
   if (!db.hasCustomerMessages(waId)) throw new Error("Клиент ещё не писал в этот чат");
   await wa.sendText(waId, text);
   db.addMessage(waId, "operator", text);
+  log.info("message", `Оператор ответил ${log.maskPhone(waId)}`);
   db.clearAttention(waId);
 }

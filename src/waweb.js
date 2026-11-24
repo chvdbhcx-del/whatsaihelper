@@ -12,6 +12,7 @@
 //  - никаких приёмов обхода блокировок и подмены номеров.
 
 import fs from "node:fs";
+import * as log from "./log.js";
 import path from "node:path";
 import pino from "pino";
 import QRCode from "qrcode";
@@ -80,6 +81,7 @@ class Session {
     sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
       if (this.sock !== sock) return;
       if (qr) {
+        if (this.state.status !== "qr") log.info("whatsapp", `Номер «${this.accountId}»: ждёт сканирования QR-кода`);
         this.state.status = "qr";
         this.state.qrDataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 280 });
       }
@@ -89,7 +91,7 @@ class Session {
         this.state.error = null;
         this.state.me = sock.user?.id?.split(":")[0] ?? null;
         this.jids = new Set([sock.user?.id, sock.user?.lid].filter(Boolean).map(jidNormalizedUser));
-        console.log(`[${this.accountId}] WhatsApp подключён: +${this.state.me}`);
+        log.info("whatsapp", `Номер «${this.accountId}» подключён: ${log.maskPhone(this.state.me)}`);
       }
       if (connection === "close") {
         const code = lastDisconnect?.error?.output?.statusCode;
@@ -97,18 +99,21 @@ class Session {
         if (this.stopped) return;
         if (code === DisconnectReason.loggedOut) {
           this.state.status = "logged_out";
+          log.warn("whatsapp", `Номер «${this.accountId}»: вышли из аккаунта на телефоне, нужен новый QR-код`);
           this.state.error = "Сессия завершена на телефоне. Отсканируйте QR заново.";
           this.jids = new Set();
           fs.rmSync(this.authDir, { recursive: true, force: true });
         } else if (code === DisconnectReason.connectionReplaced) {
           this.state.status = "error";
           this.state.error = "Этот номер открыт в другом WhatsApp Web. Закройте его и перезапустите бота.";
+          log.error("whatsapp", `Номер «${this.accountId}»: ${this.state.error}`);
           return; // не переподключаемся, чтобы не выбивать друг друга
         } else {
           this.state.status = "reconnecting";
           this.state.error = lastDisconnect?.error?.message ?? null;
+          log.warn("whatsapp", `Номер «${this.accountId}»: связь потеряна (код ${code ?? "?"}${this.state.error ? ", " + this.state.error : ""}), переподключение через 5 с`);
         }
-        this.retryTimer = setTimeout(() => this.connect().catch((e) => console.error(`[${this.accountId}]`, e)), 5000);
+        this.retryTimer = setTimeout(() => this.connect().catch((e) => log.error("whatsapp", `Номер «${this.accountId}»: не удалось переподключиться: ${e.message}`)), 5000);
       }
     });
 

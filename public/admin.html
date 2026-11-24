@@ -153,6 +153,18 @@
   .kpi small { color:var(--muted); font-size:12px; }
   .kpi b { display:block; font-size:24px; font-weight:650; margin-top:2px; }
 
+  /* ---------- Журнал ---------- */
+  .log-tools { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .log-tools select { width:auto; }
+  #logBox { flex:1; min-height:380px; overflow:auto; padding:6px 0; font:12.5px/1.55 ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  .log-row { display:flex; gap:10px; padding:3px 14px; border-bottom:1px solid var(--line); }
+  .log-row:last-child { border-bottom:0; }
+  .log-row .t { color:var(--muted); flex:none; }
+  .log-row .c { flex:none; width:92px; color:var(--muted); }
+  .log-row .msg { white-space:pre-wrap; word-break:break-word; min-width:0; }
+  .log-row.warn { background:var(--warn-soft); } .log-row.warn .msg { color:var(--warn); }
+  .log-row.error { background:var(--bad-soft); } .log-row.error .msg { color:var(--bad); }
+
   /* ---------- Окна и уведомления ---------- */
   #modal { position:fixed; inset:0; background:rgba(0,0,0,.35); display:none; place-items:center; z-index:20; }
   #modal.open { display:grid; }
@@ -187,6 +199,7 @@
   <button class="nav-item" data-view="ai"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg>Настройки ИИ</button>
   <button class="nav-item" data-view="kb"><svg viewBox="0 0 24 24"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5v-15Z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg>База знаний</button>
   <button class="nav-item" data-view="stats"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Статистика</button>
+  <button class="nav-item" data-view="logs"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>Журнал<span class="badge" id="errBadge" hidden></span></button>
   <button class="nav-item" data-view="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>О программе<span class="badge" id="updBadge" hidden>1</span></button>
   <div class="nav-spacer"></div>
   <div class="nav-status" id="navStatus"></div>
@@ -266,6 +279,7 @@ function render() {
   if (state.view === "ai") return renderAI(c);
   if (state.view === "kb") return renderKB(c);
   if (state.view === "stats") return renderStats(c);
+  if (state.view === "logs") return renderLogs(c);
   if (state.view === "about") return renderAbout(c);
 }
 
@@ -629,14 +643,70 @@ function renderAbout(c) {
   $("#install") && ($("#install").onclick = installUpdate);
 }
 
+// ---------- Журнал ----------
+const CATS = { "": "Все события", whatsapp: "WhatsApp", message: "Сообщения", ai: "ИИ", limit: "Лимиты", update: "Обновления", app: "Программа", system: "Системные" };
+const logState = { items: [], last: 0, level: "", category: "", seenErr: 0, follow: true };
+async function refreshLogs() {
+  let fresh; try { fresh = await api(`/logs?after=${logState.last}`); } catch { return; }
+  if (!fresh.length) return;
+  logState.last = fresh.at(-1).id;
+  logState.items.push(...fresh);
+  if (logState.items.length > 3000) logState.items.splice(0, logState.items.length - 3000);
+  const newErr = logState.items.filter((e) => e.level === "error" && e.id > logState.seenErr).length;
+  $("#errBadge").hidden = !newErr || state.view === "logs"; $("#errBadge").textContent = newErr;
+  if (state.view === "logs") drawLogs();
+}
+function logTime(t) { const d = new Date(t); return `${pad(d.getDate())}.${pad(d.getMonth() + 1)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; }
+function filteredLogs() {
+  const lv = logState.level === "error" ? ["error"] : logState.level === "warn" ? ["warn", "error"] : null;
+  return logState.items.filter((e) => (!lv || lv.includes(e.level)) && (!logState.category || e.category === logState.category));
+}
+function drawLogs() {
+  const box = $("#logBox"); if (!box) return;
+  logState.seenErr = logState.last; $("#errBadge").hidden = true;
+  const list = filteredLogs();
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = list.map((e) => `<div class="log-row ${e.level}"><span class="t">${logTime(e.time)}</span><span class="c">${esc(CATS[e.category] || e.category)}</span><span class="msg">${esc(e.message)}</span></div>`).join("")
+    || '<div class="empty">Записей пока нет</div>';
+  if (atBottom || logState.follow) { box.scrollTop = box.scrollHeight; logState.follow = false; }
+}
+function renderLogs(c) {
+  c.innerHTML = `
+    <div class="page" style="display:flex;flex-direction:column">
+      <div class="page-head"><div><h1>Журнал</h1><p>Что делает программа: подключение номеров, входящие и ответы, работа ИИ, ошибки и обновления. Тексты переписки сюда не пишутся, номера клиентов скрыты, поэтому журнал можно спокойно отправить, если нужна помощь.</p></div></div>
+      <div class="log-tools">
+        <select class="input" id="logLevel"><option value="">Все уровни</option><option value="warn">Предупреждения и ошибки</option><option value="error">Только ошибки</option></select>
+        <select class="input" id="logCat">${Object.entries(CATS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}</select>
+        <span style="flex:1"></span>
+        <button class="btn ghost sm" id="logCopy">Скопировать</button>
+        <a class="btn ghost sm" href="/admin/api/logs/download" download style="text-decoration:none">Скачать за 3 дня</a>
+        ${state.app?.desktop ? '<button class="btn ghost sm" id="logFolder">Открыть папку</button>' : ""}
+      </div>
+      <div class="card" id="logBox" style="padding:0"></div>
+      <div class="hint" style="margin-top:8px">Файлы журнала хранятся 14 дней в папке программы (data\\logs).</div>
+    </div>`;
+  $("#logLevel").value = logState.level; $("#logCat").value = logState.category;
+  $("#logLevel").onchange = (e) => { logState.level = e.target.value; logState.follow = true; drawLogs(); };
+  $("#logCat").onchange = (e) => { logState.category = e.target.value; logState.follow = true; drawLogs(); };
+  $("#logCopy").onclick = async () => {
+    const text = filteredLogs().map((e) => `${new Date(e.time).toISOString()} ${e.level.toUpperCase()} [${e.category}] ${e.message}`).join("\n");
+    try { await navigator.clipboard.writeText(text); toast("Журнал скопирован"); } catch { toast("Не удалось скопировать"); }
+  };
+  $("#logFolder") && ($("#logFolder").onclick = () => api("/logs/open-folder", { method:"POST" }).then(() => toast("Папка журнала открыта")));
+  logState.follow = true;
+  drawLogs();
+}
+
 // ---------- Запуск ----------
 (async () => {
   let v = "chats"; try { v = localStorage.getItem("view") || "chats"; } catch {}
   await Promise.all([refreshStatus(), refreshChats(), refreshApp()]);
-  go(["chats","numbers","ai","kb","stats","about"].includes(v) ? v : "chats");
+  go(["chats","numbers","ai","kb","stats","logs","about"].includes(v) ? v : "chats");
   setInterval(refreshStatus, 3000);
   setInterval(refreshChats, 4000);
   setInterval(refreshApp, 5000);
+  setInterval(refreshLogs, 3000);
+  refreshLogs();
 })();
 </script>
 </body>

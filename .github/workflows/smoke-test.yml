@@ -126,6 +126,14 @@ jobs:
             "| Обновление установилось и программа перезапустилась | версия $($new.current) |" >> $env:GITHUB_STEP_SUMMARY
             if ($new.current -ne $env:LATEST) { throw "Обновление не установилось" }
           }
+
+          # Журнал: последние записи из программы и файл на диске
+          $logs = Invoke-RestMethod "$base/admin/api/logs" -Headers $h
+          "Записей в журнале: $($logs.Count)"
+          $logs | Select-Object -Last 25 | ForEach-Object { "  [$($_.category)] $($_.message)" }
+          $files = Get-ChildItem "$dataDir\logs" -Filter *.log -ErrorAction SilentlyContinue
+          "| Журнал: записей в программе / файлов на диске | $($logs.Count) / $($files.Count) |" >> $env:GITHUB_STEP_SUMMARY
+          if ($logs.Count -lt 1 -or $files.Count -lt 1) { throw "Журнал пуст" }
           Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
 
       - uses: actions/upload-artifact@v4

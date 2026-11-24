@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import * as log from "./log.js";
 import { config } from "./config.js";
 import * as waweb from "./waweb.js";
 
@@ -29,7 +30,9 @@ function endpoint() {
 
 async function post(body) {
   if (wa.dryRun) {
-    console.log("[WA_DRY_RUN] →", JSON.stringify(body));
+    // В консоль полный текст (для отладки), в журнал без текста переписки
+    process.stdout.write(`[WA_DRY_RUN] → ${JSON.stringify(body)}\n`);
+    if (body.to) log.info("message", `Тестовый режим: отправка ${log.maskPhone(body.to)} не выполняется`);
     return { dryRun: true };
   }
   const { url, headers } = endpoint();
@@ -66,7 +69,7 @@ export function markRead(messageId, chatId) {
     const { account, to } = splitChatId(chatId);
     return wa.dryRun ? Promise.resolve() : waweb.markRead(account, to);
   }
-  return post({ status: "read", message_id: messageId }).catch((e) => console.warn("markRead:", e.message));
+  return post({ status: "read", message_id: messageId }).catch((e) => log.warn("whatsapp", `Не удалось отметить сообщение прочитанным: ${e.message}`));
 }
 
 /** Проверка подписи X-Hub-Signature-256 (Meta). Без секрета приложения проверка пропускается. */

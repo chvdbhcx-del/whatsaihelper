@@ -3,6 +3,7 @@ import path from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "./config.js";
 import * as settings from "./settings.js";
+import * as log from "./log.js";
 
 // Клиент создаётся заново, если ключ поменяли в панели оператора
 let client = null;
@@ -112,7 +113,7 @@ export async function generateReply(history, accountId = "api") {
     }
     return result;
   } catch (err) {
-    console.error("Ошибка ИИ:", err.message ?? err);
+    log.error("ai", `Ошибка ИИ (${settings.get().aiProvider === "openai" ? settings.get().openaiModel || "OpenAI-совместимый" : "Claude"}): ${String(err.message ?? err).slice(0, 500)}`);
     return { reply: HANDOFF_TEXT, handoff: true, handoff_reason: `Ошибка ИИ: ${String(err.message ?? err).slice(0, 150)}` };
   }
 }

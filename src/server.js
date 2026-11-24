@@ -9,6 +9,7 @@ import { onIncoming, operatorSend, usageToday } from "./bot.js";
 import { metrics, resetMetrics } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
+import * as log from "./log.js";
 
 const app = express();
 
@@ -43,7 +44,7 @@ app.post("/webhook", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
     try {
       onIncoming(msg);
     } catch (e) {
-      console.error("onIncoming:", e);
+      log.error("message", `Сбой приёма сообщения: ${e.stack || e.message}`);
     }
   }
 });
@@ -76,6 +77,7 @@ admin.post("/api/chats/:id/mode", (req, res) => {
   const mode = req.body?.mode === "human" ? "human" : "bot";
   db.setMode(req.params.id, mode, { reason: mode === "human" ? "Оператор перехватил диалог" : null, attention: false });
   db.addMessage(req.params.id, "system", mode === "human" ? "Оператор взял диалог" : "Диалог возвращён боту");
+  log.info("message", `${log.maskPhone(req.params.id)}: ${mode === "human" ? "оператор взял диалог" : "диалог возвращён боту"}`);
   res.json({ ok: true });
 });
 admin.post("/api/chats/:id/send", async (req, res) => {
@@ -85,6 +87,7 @@ admin.post("/api/chats/:id/send", async (req, res) => {
     await operatorSend(req.params.id, text);
     res.json({ ok: true });
   } catch (e) {
+    log.error("message", `Ответ оператора ${log.maskPhone(req.params.id)} не отправлен: ${e.message}`);
     res.status(502).json({ error: e.message });
   }
 });
@@ -109,6 +112,8 @@ admin.get("/api/status", (_req, res) => {
 });
 admin.post("/api/settings", (req, res) => {
   const s = settings.update(req.body ?? {});
+  const b = req.body ?? {};
+  if (b.aiProvider) log.info("app", `Настройки ИИ: ${b.aiProvider === "anthropic" ? "Claude" : `${s.openaiModel || "модель не задана"} (${s.openaiBaseUrl || "адрес не задан"})`}${b.anthropicApiKey || b.openaiApiKey ? ", ключ обновлён" : ""}`);
   res.json({ ok: true, dailyLimit: s.dailyLimit });
 });
 // ---------- База знаний (редактор в панели) ----------
@@ -139,6 +144,7 @@ admin.put("/api/knowledge/file", (req, res) => {
   if (!p) return res.status(400).json({ error: "Недопустимое имя файла" });
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, String(req.body?.text ?? ""));
+  log.info("app", `База знаний: сохранён файл ${req.body.name}`);
   res.json({ ok: true });
 });
 
@@ -155,6 +161,21 @@ admin.post("/api/app/install", (_req, res) => {
   res.json({ ok: !!globalThis.__desktop?.install() });
 });
 
+// ---------- Журнал ----------
+admin.get("/api/logs", (req, res) => {
+  res.json(log.list({ after: Number(req.query.after) || 0, level: String(req.query.level || ""), category: String(req.query.category || "") }));
+});
+admin.get("/api/logs/download", (_req, res) => {
+  const d = new Date();
+  const name = `whatsapp-assistant-log-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}.txt`;
+  res.set("Content-Disposition", `attachment; filename="${name}"`).type("text/plain; charset=utf-8");
+  const head = `ИИ-ассистент WhatsApp ${globalThis.__desktop?.version ?? ""}, провайдер ${config.wa.provider}, ${new Date().toString()}\n\n`;
+  res.send(head + log.exportText(3));
+});
+admin.post("/api/logs/open-folder", (_req, res) => {
+  res.json({ ok: !!globalThis.__desktop?.openPath?.(log.LOG_DIR), path: log.LOG_DIR });
+});
+
 admin.get("/api/metrics", (_req, res) => res.json(metrics()));
 admin.post("/api/metrics/reset", (_req, res) => {
   resetMetrics();
@@ -165,6 +186,7 @@ admin.post("/api/metrics/reset", (_req, res) => {
 admin.post("/api/accounts", (req, res) => {
   if (config.wa.provider !== "web") return res.status(400).json({ error: "Несколько номеров доступны только в режиме QR (WA_PROVIDER=web)" });
   const acc = settings.addAccount(req.body?.name);
+  log.info("whatsapp", `Добавлен номер «${acc.name}» (${acc.id})`);
   if (!config.wa.dryRun) waweb.startAccount(acc.id);
   res.json(acc);
 });
@@ -175,11 +197,13 @@ admin.post("/api/accounts/:id", (req, res) => {
   }
   const acc = settings.updateAccount(req.params.id, req.body ?? {});
   if (!acc) return res.sendStatus(404);
+  if (req.body?.dailyLimit !== undefined) log.info("limit", `Номер «${acc.id}»: лимит ответов в день ${acc.dailyLimit || "без лимита"}`);
   res.json(acc);
 });
 admin.post("/api/accounts/:id/logout", async (req, res) => {
   try {
     await waweb.logout(req.params.id);
+    log.info("whatsapp", `Номер «${req.params.id}» отвязан из панели`);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -189,6 +213,7 @@ admin.delete("/api/accounts/:id", async (req, res) => {
   if (!settings.account(req.params.id)) return res.sendStatus(404);
   await waweb.removeAccount(req.params.id);
   settings.removeAccount(req.params.id);
+  log.info("whatsapp", `Номер «${req.params.id}» удалён`);
   res.json({ ok: true });
 });
 app.use("/admin", admin);
@@ -196,6 +221,7 @@ app.use("/admin", admin);
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 export const ready = new Promise((resolve) => app.listen(config.port, config.host, async () => {
+  log.info("app", `Программа запущена${globalThis.__desktop ? `, версия ${globalThis.__desktop.version}` : ""}. Провайдер WhatsApp: ${config.wa.provider}${config.wa.dryRun ? " (тестовый режим)" : ""}`);
   console.log(`Сервер запущен на порту ${config.port}`);
   if (config.ngrok.authtoken) await startNgrok();
   if (config.wa.provider === "web") {

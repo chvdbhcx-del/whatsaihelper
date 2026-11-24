@@ -66,15 +66,21 @@ async function firstRunWarning(dataDir) {
 // Состояние видно в панели (раздел «О программе») через globalThis.__desktop.
 const update = { status: "idle", version: null, percent: 0, error: null, checkedAt: null };
 let installing = false;
+let ulog = () => {}; // журнал программы (подключается после запуска сервера)
 
 function setupUpdates() {
   globalThis.__desktop = {
     version: app.getVersion(),
     state: () => ({ ...update, current: app.getVersion(), packaged: app.isPackaged }),
     check: () => checkUpdates(),
+    openPath: (p) => {
+      shell.openPath(p);
+      return true;
+    },
     install: () => {
       if (update.status !== "downloaded") return false;
       installing = true;
+      ulog("info", `Установка обновления ${update.version} и перезапуск`);
       setImmediate(() => autoUpdater.quitAndInstall(true, true));
       return true;
     },
@@ -86,11 +92,23 @@ function setupUpdates() {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on("checking-for-update", () => Object.assign(update, { status: "checking", error: null }));
-  autoUpdater.on("update-not-available", () => Object.assign(update, { status: "latest", checkedAt: Date.now() }));
-  autoUpdater.on("update-available", (i) => Object.assign(update, { status: "downloading", version: i.version, percent: 0, checkedAt: Date.now() }));
+  autoUpdater.on("update-not-available", () => {
+    Object.assign(update, { status: "latest", checkedAt: Date.now() });
+    ulog("info", `Проверка обновлений: установлена последняя версия ${app.getVersion()}`);
+  });
+  autoUpdater.on("update-available", (i) => {
+    Object.assign(update, { status: "downloading", version: i.version, percent: 0, checkedAt: Date.now() });
+    ulog("info", `Найдена новая версия ${i.version}, скачивание`);
+  });
   autoUpdater.on("download-progress", (p) => Object.assign(update, { status: "downloading", percent: Math.round(p.percent) }));
-  autoUpdater.on("update-downloaded", (i) => Object.assign(update, { status: "downloaded", version: i.version, percent: 100 }));
-  autoUpdater.on("error", (e) => Object.assign(update, { status: "error", error: String(e?.message || e).split("\n")[0], checkedAt: Date.now() }));
+  autoUpdater.on("update-downloaded", (i) => {
+    Object.assign(update, { status: "downloaded", version: i.version, percent: 100 });
+    ulog("info", `Версия ${i.version} скачана и готова к установке`);
+  });
+  autoUpdater.on("error", (e) => {
+    Object.assign(update, { status: "error", error: String(e?.message || e).split("\n")[0], checkedAt: Date.now() });
+    ulog("warn", `Ошибка обновления: ${update.error}`);
+  });
   checkUpdates();
   setInterval(checkUpdates, 4 * 60 * 60 * 1000); // каждые 4 часа
 }
@@ -130,6 +148,8 @@ app.whenReady().then(async () => {
   try {
     const server = await import(pathToFileURL(path.join(ROOT, "src", "server.js")).href);
     await server.ready;
+    const logm = await import(pathToFileURL(path.join(ROOT, "src", "log.js")).href);
+    ulog = (level, msg) => logm.log(level, "update", msg);
   } catch (e) {
     dialog.showErrorBox(TITLE, `Не удалось запустить бота:\n${e.stack || e.message}`);
     return app.quit();
