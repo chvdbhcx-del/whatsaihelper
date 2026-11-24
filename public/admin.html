@@ -378,6 +378,41 @@
   #botTask .bt-close { width:24px; height:24px; font-size:16px; }
   #botTask .bt-row .input { height:32px; font-size:13px; padding:0 10px; }
   #botTask .bt-row .btn { height:32px; }
+
+  /* ---------- Правки 1.10: пауза бота, узкое окно, окна в тёмной теме, контраст ---------- */
+  .pill.pause { background:var(--warn-soft); color:var(--warn); }
+  /* Список чатов сжимается в узком окне и при крупном масштабе, шапка чата не уезжает за край */
+  #chatList { width:clamp(260px, 32%, 360px); }
+  #conv { container-type:inline-size; }
+  #chatList .tabs { flex-wrap:wrap; }
+  #chatItems { container-type:inline-size; }
+  @container (max-width: 320px) { .chat .tags .tag { display:none; } }
+  #conv .head .who { min-width:90px; }
+  @container (max-width: 560px) { #conv .head .pill { display:none; } #conv .head .who small { display:none; } }
+  /* Окна подтверждения: плавное появление, тень и заметное затемнение в тёмной теме */
+  #modal { background:rgba(0,0,0,.5); }
+  :root[data-theme="dark"] #modal { background:rgba(0,0,0,.65); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) #modal { background:rgba(0,0,0,.65); } }
+  #modal .card { box-shadow:0 12px 40px rgba(0,0,0,.28); }
+  #modal.open { animation:fadeIn .15s ease-out; }
+  #modal.open .card { animation:popIn .15s ease-out; }
+  @keyframes fadeIn { from { opacity:0; } }
+  @keyframes popIn { from { opacity:0; transform:translateY(6px) scale(.98); } }
+  @media (prefers-reduced-motion: reduce) { #modal.open, #modal.open .card { animation:none; } }
+  /* Контраст: тёмный текст на ярких кнопках и значках тёмной темы, глубже оранжевый в светлой */
+  :root { --on-accent:#fff; --on-warn:#fff; --warn-text:#9a5200; }
+  :root[data-theme="dark"] { --on-accent:#06261c; --on-warn:#2a1700; --warn-text:var(--warn); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --on-accent:#06261c; --on-warn:#2a1700; --warn-text:var(--warn); } }
+  .btn:not(.ghost):not(.danger), .send, .brand .logo { color:var(--on-accent); }
+  #banner .btn { color:var(--accent-text); }
+  .badge, .attn-dot { color:var(--on-warn); }
+  .handoff, .pill.warn, .pill.pause, .tag.human, .chat .last .who-op, .chat.attn .when { color:var(--warn-text); }
+  /* «Ответить ботом»: кнопка видна и с клавиатуры, выбранное сообщение чуть затемнено, без цветной рамки */
+  .m.customer .bot-reply-btn { display:inline-flex; opacity:0; pointer-events:none; transition:opacity .12s; }
+  .m.customer:hover .bot-reply-btn, .m.customer:focus-within .bot-reply-btn, .m.customer.picked .bot-reply-btn { opacity:1; pointer-events:auto; }
+  .m.customer.picked { background:color-mix(in srgb, var(--bubble-in) 90%, var(--text)); }
+  /* Журнал: списки той же высоты, что и кнопки */
+  .log-tools select { height:30px; padding:0 8px; font-size:13px; }
 </style>
 <script>
   // Тема применяется до отрисовки, чтобы не мигало
@@ -597,7 +632,7 @@ async function openChat(id, refresh) {
   let data; try { data = await api("/chats/" + encodeURIComponent(id)); } catch { return; }
   const conv = $("#conv"); if (!conv || state.current !== id) return;
   const { chat, messages } = data;
-  const sig = `${messages.length}|${chat.mode}|${chat.needs_attention}|${chat.handoff_reason || ""}`;
+  const sig = `${messages.length}|${chat.mode}|${chat.needs_attention}|${chat.handoff_reason || ""}|${chat.last_human_at && Date.now() - chat.last_human_at < (state.status?.humanPauseMinutes ?? 60) * 60000 ? "p" : ""}`;
   if (refresh && conv.dataset.sig === sig && conv.dataset.id === id) return;
   const box = $("#msgs");
   const atBottom = !box || box.scrollHeight - box.scrollTop - box.clientHeight < 60;
@@ -622,11 +657,16 @@ async function openChat(id, refresh) {
     return `${sep}<div class="m ${m.role}" data-mid="${m.id}">${label}${quote}${esc(m.text)}<span class="time">${hm(m.created_at)}</span>${act}</div>`;
   }).join("");
   const multi = Object.keys(accNames).length > 1;
+  // Оператор недавно ответил в режиме «бот»: бот молчит до конца паузы, показываем это явно
+  const pauseMs = (state.status?.humanPauseMinutes ?? 60) * 60000;
+  const pausedUntil = chat.mode === "bot" && chat.last_human_at && Date.now() - chat.last_human_at < pauseMs ? chat.last_human_at + pauseMs : 0;
   conv.innerHTML = `
     <div class="head">
       ${avatar(chat.name || phone(chat.wa_id), chat.wa_id)}
-      <div class="who"><b>${esc(chat.name || phone(chat.wa_id))}</b><small>${chat.mode === "bot" ? "бот на связи" : "оператор на связи"} · ${esc(phone(chat))}${multi && accNames[chat.account_id] ? " · " + esc(accNames[chat.account_id]) : ""}</small></div>
-      ${chat.mode === "bot"
+      <div class="who"><b>${esc(chat.name || phone(chat.wa_id))}</b><small>${chat.mode === "bot" ? (pausedUntil ? "бот на паузе" : "бот на связи") : "оператор на связи"} · ${esc(phone(chat))}${multi && accNames[chat.account_id] ? " · " + esc(accNames[chat.account_id]) : ""}</small></div>
+      ${chat.mode === "bot" && pausedUntil
+        ? `<span class="pill pause" title="Вы ответили в этот чат, поэтому бот молчит до ${hm(pausedUntil)}, чтобы не перебивать"><span class="dot"></span>Бот на паузе до ${hm(pausedUntil)}</span><button class="btn ghost sm" id="release">Вернуть боту сейчас</button><button class="btn sm" id="take">Взять диалог</button>`
+        : chat.mode === "bot"
         ? '<span class="pill ok"><span class="dot"></span>Отвечает бот</span><button class="btn sm" id="take">Взять диалог</button>'
         : '<span class="pill warn"><span class="dot"></span>Отвечаете вы</span><button class="btn ghost sm" id="release">Вернуть боту</button>'}
       <button class="icon-btn" id="delChat" title="Удалить диалог"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg></button>
@@ -638,7 +678,7 @@ async function openChat(id, refresh) {
       <div class="bt-row"><input class="input" id="btHint" placeholder="Подсказка боту, необязательно: например, «предложи доставку завтра»" maxlength="1000"><button class="btn sm" id="btGo" type="button">Ответить ботом</button></div>
     </div>
     <form id="composer"><textarea id="text" rows="1" placeholder="Сообщение клиенту"></textarea><button class="send" title="Отправить (Enter)"><svg viewBox="0 0 24 24"><path d="M4 12 20 4l-4 16-4-6-8-2Z"/><path d="m12 14 8-10"/></svg></button></form>
-    <div class="compose-hint">${chat.mode === "bot" ? "Бот отвечает сам. Если ответите вы, бот замолчит здесь на час." : "Диалог у вас. «Вернуть боту» — и бот продолжит."} <kbd>Enter</kbd> отправить, <kbd>Shift</kbd>+<kbd>Enter</kbd> новая строка.</div>`;
+    <div class="compose-hint">${chat.mode === "bot" ? (pausedUntil ? `Бот молчит до ${hm(pausedUntil)}, потому что вы ответили. «Вернуть боту сейчас» — и он продолжит.` : "Бот отвечает сам. Если ответите вы, бот замолчит здесь на час.") : "Диалог у вас. «Вернуть боту» — и бот продолжит."} <kbd>Enter</kbd> отправить, <kbd>Shift</kbd>+<kbd>Enter</kbd> новая строка.</div>`;
   const t = $("#text"); t.value = draft;
   const grow = () => { t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 160) + "px"; };
   t.oninput = grow; grow();

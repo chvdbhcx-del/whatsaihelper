@@ -137,6 +137,7 @@ admin.get("/api/status", (_req, res) => {
       fastAI: s.fastAI,
     },
     aiMock: config.ai.mock,
+    humanPauseMinutes: config.humanPauseMs / 60000,
   });
 });
 admin.post("/api/settings", (req, res) => {
