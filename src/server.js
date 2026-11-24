@@ -24,6 +24,8 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", express.raw({ type: "*/*", limit: "2mb" }), (req, res) => {
+  // В режиме QR вебхук не нужен: принимаем его только в тестовом режиме, иначе любая веб-страница могла бы подкинуть фальшивые диалоги
+  if (config.wa.provider === "web" && !config.wa.dryRun) return res.sendStatus(404);
   if (config.wa.webhookKey && req.query.key !== config.wa.webhookKey) return res.sendStatus(403);
   if (!wa.verifySignature(req.body, req.get("x-hub-signature-256"))) return res.sendStatus(401);
 
@@ -58,7 +60,8 @@ function adminAuth(req, res, next) {
   const ok =
     scheme === "Basic" &&
     user === "admin" &&
-    pass?.length === config.adminPassword.length &&
+    pass !== undefined &&
+    Buffer.byteLength(pass) === Buffer.byteLength(config.adminPassword) &&
     crypto.timingSafeEqual(Buffer.from(pass), Buffer.from(config.adminPassword));
   if (ok) return next();
   res.set("WWW-Authenticate", 'Basic realm="operator"').sendStatus(401);
@@ -86,6 +89,7 @@ admin.post("/api/chats/delete", (req, res) => {
   res.json({ ok: true, deleted: n });
 });
 admin.post("/api/chats/:id/mode", (req, res) => {
+  if (!db.getChat(req.params.id)) return res.status(404).json({ error: "Диалог не найден" });
   const mode = req.body?.mode === "human" ? "human" : "bot";
   db.setMode(req.params.id, mode, { reason: mode === "human" ? "Оператор перехватил диалог" : null, attention: false });
   db.addMessage(req.params.id, "system", mode === "human" ? "Оператор взял диалог" : "Диалог возвращён боту");

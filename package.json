@@ -1,6 +1,6 @@
 {
   "name": "whatsapp-ai-assistant",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "ИИ-ассистент техподдержки для WhatsApp (официальный Cloud API через BSP) с панелью оператора",
   "type": "module",
   "main": "desktop/main.mjs",

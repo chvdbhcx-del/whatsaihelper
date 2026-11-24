@@ -29,6 +29,12 @@ export function onIncoming(msg) {
   db.upsertChat(chatId, msg.name, account, msg.phone ?? (/^\d+$/.test(msg.from) ? msg.from : null));
   const isNew = db.addMessage(chatId, "customer", msg.text, msg.id);
   if (!isNew) return; // повторная доставка вебхука
+  if (msg.stale) {
+    // Сообщение пришло, пока программа была выключена, и уже устарело: бот не отвечает невпопад, ждём оператора
+    db.markAttention(chatId);
+    log.info("message", `Входящее от ${log.maskPhone(chatId)}, пришедшее пока программа была выключена: ждёт оператора, номер «${account}»`);
+    return;
+  }
   log.info("message", `Входящее от ${log.maskPhone(chatId)} (${msg.text.length} симв.), номер «${account}»`);
   wa.markRead(msg.id, chatId);
   schedule(chatId);
@@ -43,6 +49,13 @@ function schedule(waId) {
       respond(waId).catch((e) => log.error("bot", `Сбой обработки ${log.maskPhone(waId)}: ${e.stack || e.message}`));
     }, settings.get().replyDelaySeconds * 1000)
   );
+}
+
+/** Есть ли ответ бота или оператора после последнего сообщения клиента (ответ ботом на более раннее сообщение не считается). */
+function answered(history) {
+  const last = history.findLast((m) => m.role === "customer");
+  if (!last) return true;
+  return history.some((m) => m.id > last.id && (m.role === "operator" || (m.role === "bot" && (!m.reply_to || m.reply_to >= last.id))));
 }
 
 function botMayAnswer(chat) {
@@ -79,14 +92,15 @@ async function respond(waId) {
   busy.add(waId);
   try {
     const history = db.getMessages(waId, config.ai.history + 10);
-    if (history.findLast((m) => m.role !== "system")?.role !== "customer") return; // уже ответили
+    if (answered(history)) return; // уже ответили
     const started = Date.now();
     const result = await generateReply(history, chat.account_id);
     if (!result) return;
     log.info("ai", `Ответ ИИ для ${log.maskPhone(waId)} за ${((Date.now() - started) / 1000).toFixed(1)} с${result.handoff ? ", с передачей оператору" : ""}`);
 
-    // Пока модель думала, оператор мог перехватить чат
+    // Пока модель думала, оператор мог перехватить или удалить чат
     const fresh = db.getChat(waId);
+    if (!fresh) return;
     if (!botMayAnswer(fresh)) {
       log.info("message", `${log.maskPhone(waId)}: оператор взял диалог, пока ИИ думал; ответ не отправлен`);
       return;
@@ -115,8 +129,7 @@ async function respond(waId) {
  * учитывая всю переписку, включая ответы оператора. Дальше бот отвечает как обычно.
  */
 export function resumeBot(waId) {
-  const last = db.getMessages(waId, 50).findLast((m) => m.role !== "system");
-  if (last?.role === "customer") {
+  if (!answered(db.getMessages(waId, 50))) {
     log.info("message", `${log.maskPhone(waId)}: диалог возвращён боту, отвечаем на последнее сообщение клиента`);
     schedule(waId);
   }

@@ -282,6 +282,7 @@
   .m .role { display:block; font-size:11.5px; font-weight:700; margin-bottom:1px; }
   .m .role.bot { color:var(--accent-text); } .m .role.op { color:#3a6fd8; }
   :root[data-theme="dark"] .m .role.op { color:#7fa8ff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .m .role.op { color:#7fa8ff; } }
   .m.system { font-size:11.5px; padding:3px 10px; margin:6px 0; background:var(--panel); opacity:.95; }
   .day { background:var(--panel); padding:3px 10px; border-radius:8px; font-size:11.5px; box-shadow:var(--shadow); margin:10px 0 6px; }
   #composer { padding:8px 12px; gap:8px; border-top:0; align-items:flex-end; }
@@ -435,7 +436,10 @@ function ask(title, text, yes = "Да", danger = false, checkbox = "") {
     $("#modalCheck").onchange = (e) => { ask.checked = e.target.checked; };
     $("#modalYes").textContent = yes; $("#modalYes").className = danger ? "btn danger" : "btn";
     $("#modal").classList.add("open");
-    const done = (v) => { $("#modal").classList.remove("open"); resolve(v); };
+    // Enter подтверждает, Esc отменяет
+    const keys = (e) => { if (e.key === "Escape") { e.preventDefault(); done(false); } else if (e.key === "Enter") { e.preventDefault(); done(true); } };
+    const done = (v) => { document.removeEventListener("keydown", keys); $("#modal").classList.remove("open"); resolve(v); };
+    document.addEventListener("keydown", keys);
     $("#modalYes").onclick = () => done(true); $("#modalNo").onclick = () => done(false);
   });
 }
@@ -677,15 +681,17 @@ async function openChat(id, refresh) {
   t.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } };
   $("#composer").onsubmit = async (e) => {
     e.preventDefault();
-    const text = t.value.trim(); if (!text) return;
-    try { await api(`/chats/${encodeURIComponent(id)}/send`, { method:"POST", body: JSON.stringify({ text }) }); t.value = ""; }
-    catch (err) { toast("Не отправлено: " + err.message); }
+    const text = t.value.trim(); if (!text || state.sending) return;
+    state.sending = true; // защита от двойной отправки (двойной Enter или щелчок)
+    try { await api(`/chats/${encodeURIComponent(id)}/send`, { method:"POST", body: JSON.stringify({ text }) }); if ($("#text")) $("#text").value = ""; state.sending = false; }
+    catch (err) { state.sending = false; toast("Не отправлено: " + err.message); }
     refreshChats();
   };
   drawChatList();
 }
 async function setMode(mode) {
-  await api(`/chats/${encodeURIComponent(state.current)}/mode`, { method:"POST", body: JSON.stringify({ mode }) });
+  try { await api(`/chats/${encodeURIComponent(state.current)}/mode`, { method:"POST", body: JSON.stringify({ mode }) }); }
+  catch (err) { toast("Не удалось: " + err.message); return; }
   toast(mode === "human" ? "Диалог у вас. Бот в этом чате молчит." : "Диалог возвращён боту");
   refreshChats();
 }

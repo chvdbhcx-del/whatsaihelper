@@ -5,22 +5,58 @@ import { config } from "./config.js";
 
 const FILE = path.join(config.dataDir, "settings.json");
 
+// Ключи ИИ в файле хранятся зашифрованными, если программа запущена в Windows-оболочке (globalThis.__secrets)
+const SECRET_FIELDS = ["anthropicApiKey", "openaiApiKey"];
+const ENC = "enc:";
+let plaintextOnDisk = false;
+
+function decryptFields(o) {
+  const out = { ...o };
+  for (const f of SECRET_FIELDS) {
+    const v = out[f];
+    if (typeof v !== "string" || !v) continue;
+    if (v.startsWith(ENC)) {
+      try {
+        out[f] = globalThis.__secrets.decrypt(v.slice(ENC.length));
+      } catch {
+        out[f] = ""; // расшифровать нельзя (другой пользователь Windows): ключ нужно ввести заново
+        console.warn(`Не удалось расшифровать сохранённый ключ (${f}): введите его заново в «Настройках ИИ»`);
+      }
+    } else if (globalThis.__secrets) plaintextOnDisk = true;
+  }
+  return out;
+}
+
+function encryptFields(o) {
+  if (!globalThis.__secrets) return o;
+  const out = { ...o };
+  for (const f of SECRET_FIELDS) if (typeof out[f] === "string" && out[f]) out[f] = ENC + globalThis.__secrets.encrypt(out[f]);
+  return out;
+}
+
 function read() {
   try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8"));
+    return decryptFields(JSON.parse(fs.readFileSync(FILE, "utf8")));
   } catch {
     return {};
   }
+}
+
+function write(obj) {
+  fs.mkdirSync(config.dataDir, { recursive: true });
+  fs.writeFileSync(FILE, JSON.stringify(encryptFields(obj), null, 2), { mode: 0o600 });
 }
 
 let current = read();
 
 // Google отключил gemini-2.5-flash для новых ключей: переводим старую настройку на актуальную модель
 const RETIRED = { "gemini-2.5-flash": "gemini-3.5-flash", "gemini-2.5-flash-lite": "gemini-3.5-flash-lite" };
-if (/generativelanguage\.googleapis\.com/.test(current.openaiBaseUrl ?? "") && RETIRED[current.openaiModel]) {
-  current = { ...current, openaiModel: RETIRED[current.openaiModel] };
+const retired = /generativelanguage\.googleapis\.com/.test(current.openaiBaseUrl ?? "") && RETIRED[current.openaiModel];
+if (retired) current = { ...current, openaiModel: RETIRED[current.openaiModel] };
+if (retired || plaintextOnDisk) {
+  // Заодно шифруем ключи, сохранённые прежними версиями открытым текстом
   try {
-    fs.writeFileSync(FILE, JSON.stringify(current, null, 2), { mode: 0o600 });
+    write(current);
   } catch {
     // не страшно: поправится при следующем сохранении из панели
   }
@@ -52,8 +88,7 @@ export function account(id) {
 }
 
 function save(next) {
-  fs.mkdirSync(config.dataDir, { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(next, null, 2), { mode: 0o600 });
+  write(next);
   current = next;
 }
 

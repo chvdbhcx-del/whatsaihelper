@@ -73,7 +73,8 @@ function restoreAuthIfBroken(accountId) {
 function dropBackup(accountId) {
   fs.rmSync(path.join(BACKUP_ROOT, accountId), { recursive: true, force: true });
 }
-const MAX_AGE_MS = 10 * 60 * 1000; // не отвечаем на сообщения старше 10 минут (например, пришедшие, пока бот был выключен)
+const MAX_AGE_MS = 10 * 60 * 1000; // на сообщения старше 10 минут (пришедшие, пока бот был выключен) бот не отвечает, их ждёт оператор
+const KEEP_AGE_MS = 3 * 24 * 60 * 60 * 1000; // более старые не показываем вовсе
 const logger = pino({ level: "warn" });
 
 let onMessage = () => {};
@@ -173,6 +174,14 @@ class Session {
           this.state.error = "Этот номер открыт в другом WhatsApp Web. Закройте его и перезапустите бота.";
           log.error("whatsapp", `Номер «${this.accountId}»: ${this.state.error}`);
           return; // не переподключаемся, чтобы не выбивать друг друга
+        } else if (code === DisconnectReason.restartRequired) {
+          // Обычный шаг после сканирования QR: WhatsApp просит переподключиться. Это не ошибка
+          this.state.status = "starting";
+          this.state.error = null;
+          log.info("whatsapp", `Номер «${this.accountId}»: QR-код принят, завершаем подключение`);
+          clearTimeout(this.retryTimer);
+          this.retryTimer = setTimeout(() => this.connect().catch((e) => this.scheduleReconnect(`ошибка подключения: ${e.message}`)), 500);
+          return;
         } else {
           this.state.status = "reconnecting";
           this.state.error = lastDisconnect?.error?.message ?? null;
@@ -185,7 +194,9 @@ class Session {
     });
 
     sock.ev.on("messages.upsert", ({ messages, type }) => {
-      if (type !== "notify") return; // история и синхронизация не считаются новыми сообщениями
+      // notify: новое сообщение; append: в том числе сообщения, пришедшие пока программа была выключена или без связи.
+      // Повторы отсекает база по id сообщения
+      if (type !== "notify" && type !== "append") return;
       const own = ownJids();
       for (const m of messages) {
         const jid = m.key.remoteJid;
@@ -196,13 +207,14 @@ class Session {
         const alt = m.key.remoteJidAlt ?? m.key.senderPn;
         if (own.has(jidNormalizedUser(jid)) || (alt && own.has(jidNormalizedUser(alt)))) continue;
         const ts = Number(m.messageTimestamp) * 1000;
-        if (ts && Date.now() - ts > MAX_AGE_MS) continue;
+        const age = ts ? Date.now() - ts : 0;
+        if (age > KEEP_AGE_MS) continue;
         const text = extractText(m.message);
         if (text == null) continue; // служебные сообщения (реакции, протокол и т.п.)
         this.lastKeys.set(jid, m.key);
         // Если WhatsApp прислал скрытый id (…@lid), настоящий номер клиента иногда приходит отдельно
         const pn = [jid, alt].find((j) => j && isPnUser(j));
-        onMessage({ account: this.accountId, id: m.key.id, from: jid, name: m.pushName, text, phone: pn ? jidNormalizedUser(pn).split("@")[0] : null });
+        onMessage({ account: this.accountId, id: m.key.id, from: jid, name: m.pushName, text, phone: pn ? jidNormalizedUser(pn).split("@")[0] : null, stale: age > MAX_AGE_MS });
       }
     });
   }
@@ -239,12 +251,12 @@ class Session {
 
 function extractText(msg) {
   if (!msg) return null;
-  const inner = msg.ephemeralMessage?.message ?? msg.viewOnceMessage?.message ?? msg;
+  const inner = msg.ephemeralMessage?.message ?? msg.viewOnceMessage?.message ?? msg.viewOnceMessageV2?.message ?? msg.documentWithCaptionMessage?.message ?? msg;
   if (inner.conversation) return inner.conversation;
   if (inner.extendedTextMessage?.text) return inner.extendedTextMessage.text;
   if (inner.imageMessage) return `[клиент прислал фото${inner.imageMessage.caption ? `, подпись: ${inner.imageMessage.caption}` : ""}]`;
   if (inner.videoMessage) return `[клиент прислал видео${inner.videoMessage.caption ? `, подпись: ${inner.videoMessage.caption}` : ""}]`;
-  if (inner.documentMessage) return "[клиент прислал документ]";
+  if (inner.documentMessage) return `[клиент прислал документ${inner.documentMessage.caption ? `, подпись: ${inner.documentMessage.caption}` : ""}]`;
   if (inner.audioMessage) return "[клиент прислал голосовое сообщение]";
   if (inner.locationMessage) return "[клиент прислал геолокацию]";
   if (inner.stickerMessage) return "[стикер]";

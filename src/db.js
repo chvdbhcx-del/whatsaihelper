@@ -27,6 +27,7 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages (wa_id, id);
+  CREATE INDEX IF NOT EXISTS idx_messages_role_time ON messages (role, created_at);
 `);
 
 // Миграция: номер бота, к которому относится чат (несколько аккаунтов в режиме QR)
