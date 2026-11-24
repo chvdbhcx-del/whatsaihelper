@@ -407,12 +407,14 @@
   #banner .btn { color:var(--accent-text); }
   .badge, .attn-dot { color:var(--on-warn); }
   .handoff, .pill.warn, .pill.pause, .tag.human, .chat .last .who-op, .chat.attn .when { color:var(--warn-text); }
-  /* «Ответить ботом»: кнопка видна и с клавиатуры, выбранное сообщение чуть затемнено, без цветной рамки */
-  .m.customer .bot-reply-btn { display:inline-flex; opacity:0; pointer-events:none; transition:opacity .12s; }
-  .m.customer:hover .bot-reply-btn, .m.customer:focus-within .bot-reply-btn, .m.customer.picked .bot-reply-btn { opacity:1; pointer-events:auto; }
+  /* «Ответить ботом»: выбранное сообщение чуть затемнено, без цветной рамки */
   .m.customer.picked { background:color-mix(in srgb, var(--bubble-in) 90%, var(--text)); }
   /* Журнал: списки той же высоты, что и кнопки */
   .log-tools select { height:30px; padding:0 8px; font-size:13px; }
+  /* Кнопка «Ответить ботом» не пропадает, пока курсор идёт к ней: мостик над промежутком и задержка перед скрытием */
+  .m.customer .bot-reply-btn { display:inline-flex; visibility:hidden; opacity:0; transition:opacity .15s ease .6s, visibility 0s linear .75s; }
+  .m.customer:hover .bot-reply-btn, .m.customer.picked .bot-reply-btn, .m.customer .bot-reply-btn:focus-visible { visibility:visible; opacity:1; transition-delay:0s, 0s; }
+  .bot-reply-btn::before { content:""; position:absolute; top:-12px; bottom:-12px; left:-16px; right:-8px; }
 </style>
 <script>
   // Тема применяется до отрисовки, чтобы не мигало
