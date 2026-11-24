@@ -207,15 +207,22 @@ async function openAICompatible(system, messages, json, maxTokens) {
     // Некоторые модели не поддерживают response_format: пробуем без него
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   }
-  // Бесплатные тарифы часто отвечают 429 «слишком много запросов»: подождём и попробуем ещё до 2 раз
-  for (let attempt = 0; res.status === 429 && attempt < 2; attempt++) {
+  // Бесплатные тарифы часто отвечают 429 «слишком много запросов» или 503 «перегружено»: подождём и попробуем ещё до 2 раз
+  for (let attempt = 0; (res.status === 429 || res.status === 503) && attempt < 2; attempt++) {
     const wait = Math.min(Number(res.headers.get("retry-after")) * 1000 || (attempt + 1) * 3000, 20000);
     await new Promise((r) => setTimeout(r, wait));
     res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
   }
+  // Gemini часто перегружен: пробуем облегчённую версию той же модели (gemini-3.5-flash → gemini-3.5-flash-lite)
+  if (res.status === 503 && /googleapis\.com/.test(url) && /^gemini-[\d.]+-flash$/.test(s.openaiModel)) {
+    const lite = `${s.openaiModel}-lite`;
+    log.warn("ai", `${s.openaiModel} перегружена, пробуем ${lite}`);
+    res = await fetch(url, { method: "POST", headers, body: JSON.stringify({ ...body, model: lite }) });
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(`${res.status} ${JSON.stringify(data.error ?? data).slice(0, 200)}`);
+    const e = Array.isArray(data) ? data[0]?.error : data.error; // Gemini отдаёт ошибку массивом
+    const err = new Error(`${res.status} ${typeof e?.message === "string" ? e.message : JSON.stringify(e ?? data)}`.slice(0, 400));
     err.status = res.status;
     throw err;
   }
@@ -269,4 +276,35 @@ function mockReply(lastText) {
     };
   }
   return { reply: `Понял вас. Уточните, пожалуйста, детали: «${lastText.slice(0, 60)}»`, handoff: false, handoff_reason: "" };
+}
+
+/** Проверка настроек ИИ из панели: короткий запрос, понятный результат. */
+export async function testAI() {
+  const started = Date.now();
+  try {
+    const { text } = await complete({
+      system: "Ты проверяешь подключение. Ответь одним коротким предложением на русском.",
+      messages: [{ role: "user", content: "Скажи, что подключение работает." }],
+      tag: "test",
+      maxTokens: 300,
+    });
+    const ms = Date.now() - started;
+    log.info("ai", `Проверка ИИ: работает, ответ за ${(ms / 1000).toFixed(1)} с`);
+    return { ok: true, ms, text: text.slice(0, 300) };
+  } catch (err) {
+    const message = String(err.message ?? err).slice(0, 400);
+    log.error("ai", `Проверка ИИ не прошла: ${message}`);
+    return { ok: false, ms: Date.now() - started, error: message, hint: explainAIError(message) };
+  }
+}
+
+/** Человеческое объяснение частых ошибок ИИ. */
+export function explainAIError(m) {
+  if (/no longer available|not found|404/i.test(m)) return "Такой модели нет или она отключена для новых ключей. Выберите другую модель.";
+  if (/401|403|API key|unauthor|permission|invalid.*key/i.test(m)) return "Ключ не подошёл. Проверьте, что он скопирован полностью и выдан именно этим сервисом.";
+  if (/429|quota|rate/i.test(m)) return "Превышен лимит бесплатного тарифа. Подождите или выберите другую модель.";
+  if (/503|overload|high demand|unavailable/i.test(m)) return "Сервис перегружен. Обычно это временно; можно выбрать другую модель.";
+  if (/location|region|country/i.test(m)) return "Сервис недоступен из вашей страны.";
+  if (/fetch failed|ECONNREFUSED|ENOTFOUND|timeout/i.test(m)) return "Нет связи с сервисом. Проверьте интернет и адрес API.";
+  return "";
 }

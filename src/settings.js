@@ -15,6 +15,17 @@ function read() {
 
 let current = read();
 
+// Google отключил gemini-2.5-flash для новых ключей: переводим старую настройку на актуальную модель
+const RETIRED = { "gemini-2.5-flash": "gemini-3.5-flash", "gemini-2.5-flash-lite": "gemini-3.5-flash-lite" };
+if (/generativelanguage\.googleapis\.com/.test(current.openaiBaseUrl ?? "") && RETIRED[current.openaiModel]) {
+  current = { ...current, openaiModel: RETIRED[current.openaiModel] };
+  try {
+    fs.writeFileSync(FILE, JSON.stringify(current, null, 2), { mode: 0o600 });
+  } catch {
+    // не страшно: поправится при следующем сохранении из панели
+  }
+}
+
 export function get() {
   return {
     aiProvider: current.aiProvider || process.env.AI_PROVIDER || "anthropic", // anthropic | openai

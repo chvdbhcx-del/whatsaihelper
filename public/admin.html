@@ -463,7 +463,7 @@ const PRESETS = {
   ollama:     { title:"Ollama", sub:"на этом компьютере", free:true, url:"http://localhost:11434/v1", model:"qwen3:8b", hint:"Установите ollama.com, затем в терминале: ollama pull qwen3:8b. Ключ не нужен, нужен компьютер от 16 ГБ памяти." },
   openrouter: { title:"OpenRouter", sub:"модели с пометкой :free", free:true, url:"https://openrouter.ai/api/v1", model:"", hint:"Ключ: openrouter.ai/keys. Бесплатные модели: openrouter.ai/models?q=free" },
   groq:       { title:"Groq", sub:"бесплатный тариф", free:true, url:"https://api.groq.com/openai/v1", model:"llama-3.3-70b-versatile", hint:"Ключ: console.groq.com/keys" },
-  gemini:     { title:"Google Gemini", sub:"бесплатный тариф", free:true, url:"https://generativelanguage.googleapis.com/v1beta/openai", model:"gemini-2.5-flash", hint:"Ключ: aistudio.google.com → Get API key. С российских IP недоступен." },
+  gemini:     { title:"Google Gemini", sub:"бесплатный тариф", free:true, url:"https://generativelanguage.googleapis.com/v1beta/openai", model:"gemini-3.5-flash", hint:"Ключ: aistudio.google.com → Get API key. Модель gemini-3.5-flash, при перегрузке gemini-3.5-flash-lite. С российских IP недоступен." },
   custom:     { title:"Другой сервис", sub:"API в формате OpenAI", free:false, url:"", model:"", hint:"Любой сервис с методом /chat/completions." },
 };
 function guessPreset(ai) {
@@ -486,7 +486,8 @@ function renderAI(c) {
         </div>
         <div class="field"><label for="aikey">Ключ API</label><input class="input" id="aikey" type="password" autocomplete="off"></div>
         <div class="hint" id="presetHint" style="margin-bottom:14px"></div>
-        <div class="row between"><span class="hint" id="aiState"></span><button class="btn">Сохранить</button></div>
+        <div class="row between"><span class="hint" id="aiState"></span><span class="row"><button class="btn ghost" type="button" id="aiTest">Проверить</button><button class="btn">Сохранить</button></span></div>
+        <div id="aiTestResult" style="margin-top:12px"></div>
       </form>
     </div>`;
   const keySetFor = (k) => k === "anthropic" ? s.ai.anthropicKeySet : s.ai.openaiKeySet;
@@ -502,6 +503,24 @@ function renderAI(c) {
   show(sel, false);
   $("#aiState").textContent = `Сейчас: ${PRESETS[cur].title}${cur !== "anthropic" && s.ai.openaiModel ? ", " + s.ai.openaiModel : ""}${keySetFor(cur) ? ", ключ сохранён" : cur === "ollama" ? "" : ", ключ не задан"}`;
   $$(".prov", c).forEach((b) => b.onclick = () => show(b.dataset.p, true));
+  $("#aiTest").onclick = async () => {
+    const out = $("#aiTestResult"), btn = $("#aiTest");
+    btn.disabled = true; out.innerHTML = '<span class="pill warn"><span class="dot"></span>Сохраняем и проверяем…</span>';
+    try {
+      const body = { aiProvider: sel === "anthropic" ? "anthropic" : "openai" };
+      const key = $("#aikey").value.trim();
+      if (sel === "anthropic") body.anthropicApiKey = key;
+      else Object.assign(body, { openaiBaseUrl: $("#baseurl").value.trim(), openaiModel: $("#model").value.trim(), openaiApiKey: key });
+      await api("/settings", { method:"POST", body: JSON.stringify(body) });
+      $("#aikey").value = "";
+      const r = await api("/ai/test", { method:"POST" });
+      out.innerHTML = r.ok
+        ? `<div class="pill ok"><span class="dot"></span>Работает, ответ за ${(r.ms / 1000).toFixed(1).replace(".", ",")} с</div><div class="hint" style="margin-top:6px">${esc(r.text)}</div>`
+        : `<div class="pill bad"><span class="dot"></span>Не работает</div>${r.hint ? `<div style="margin-top:6px">${esc(r.hint)}</div>` : ""}<div class="hint" style="margin-top:4px;word-break:break-word">${esc(r.error)}</div>`;
+      refreshStatus();
+    } catch (err) { out.textContent = "Ошибка: " + err.message; }
+    btn.disabled = false;
+  };
   $("#aiForm").onsubmit = async (e) => {
     e.preventDefault();
     const body = { aiProvider: sel === "anthropic" ? "anthropic" : "openai" };

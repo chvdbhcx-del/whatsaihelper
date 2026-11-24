@@ -6,7 +6,7 @@ import { config, ROOT } from "./config.js";
 import * as db from "./db.js";
 import * as wa from "./whatsapp.js";
 import { onIncoming, operatorSend, usageToday } from "./bot.js";
-import { metrics, resetMetrics } from "./ai.js";
+import { metrics, resetMetrics, testAI } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
 import * as log from "./log.js";
@@ -160,6 +160,8 @@ admin.post("/api/app/check", (_req, res) => {
 admin.post("/api/app/install", (_req, res) => {
   res.json({ ok: !!globalThis.__desktop?.install() });
 });
+
+admin.post("/api/ai/test", async (_req, res) => res.json(await testAI()));
 
 // ---------- Журнал ----------
 admin.get("/api/logs", (req, res) => {
