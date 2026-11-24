@@ -157,6 +157,10 @@ admin.post("/api/app/check", (_req, res) => {
   globalThis.__desktop?.check();
   res.json({ ok: true });
 });
+admin.post("/api/app/theme", (req, res) => {
+  globalThis.__desktop?.setTheme?.(String(req.body?.theme || "system"));
+  res.json({ ok: true });
+});
 admin.post("/api/app/install", (_req, res) => {
   res.json({ ok: !!globalThis.__desktop?.install() });
 });

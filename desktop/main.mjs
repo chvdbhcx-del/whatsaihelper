@@ -1,6 +1,6 @@
 // Программа для Windows: запускает бота и открывает панель оператора в окне.
 // Терминал и npm не нужны: вход в WhatsApp по QR и ключ ИИ настраиваются в окне.
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, nativeTheme, shell } from "electron";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -73,6 +73,13 @@ function setupUpdates() {
     version: app.getVersion(),
     state: () => ({ ...update, current: app.getVersion(), packaged: app.isPackaged }),
     check: () => checkUpdates(),
+    // Рамка окна и системные диалоги в той же теме, что и панель; выбор сохраняется между запусками
+    setTheme: (t) => {
+      nativeTheme.themeSource = ["light", "dark"].includes(t) ? t : "system";
+      try {
+        fs.writeFileSync(path.join(app.getPath("userData"), "theme"), nativeTheme.themeSource);
+      } catch {}
+    },
     openPath: (p) => {
       shell.openPath(p);
       return true;
@@ -131,6 +138,10 @@ app.on("second-instance", () => {
 });
 
 app.whenReady().then(async () => {
+  try {
+    const t = fs.readFileSync(path.join(app.getPath("userData"), "theme"), "utf8").trim();
+    if (["light", "dark"].includes(t)) nativeTheme.themeSource = t;
+  } catch {}
   const folders = prepareFolders();
   password = folders.password;
   if (!(await firstRunWarning(folders.dataDir))) return app.quit();
@@ -157,7 +168,7 @@ app.whenReady().then(async () => {
 
   setupUpdates();
 
-  win = new BrowserWindow({ width: 1320, height: 860, minWidth: 900, minHeight: 600, title: TITLE, autoHideMenuBar: true, backgroundColor: "#f3f5f4" });
+  win = new BrowserWindow({ width: 1320, height: 860, minWidth: 900, minHeight: 600, title: TITLE, autoHideMenuBar: true, backgroundColor: nativeTheme.shouldUseDarkColors ? "#0f1412" : "#f3f5f4" });
   win.on("page-title-updated", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
