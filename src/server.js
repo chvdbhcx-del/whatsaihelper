@@ -5,7 +5,7 @@ import express from "express";
 import { config, ROOT } from "./config.js";
 import * as db from "./db.js";
 import * as wa from "./whatsapp.js";
-import { onIncoming, operatorSend, usageToday, resumeBot, botReplyTo } from "./bot.js";
+import { onIncoming, operatorSend, usageToday, resumeBot, botReplyTo, onAccountConnected } from "./bot.js";
 import { metrics, resetMetrics, testAI, listModels } from "./ai.js";
 import * as settings from "./settings.js";
 import * as waweb from "./waweb.js";
@@ -262,7 +262,7 @@ export const ready = new Promise((resolve) => app.listen(config.port, config.hos
   if (config.wa.provider === "web") {
     if (!settings.accounts().length) settings.addAccount("Основной номер", "main");
     if (!config.wa.dryRun) {
-      waweb.init(onIncoming);
+      waweb.init(onIncoming, onAccountConnected);
       for (const a of settings.accounts()) waweb.startAccount(a.id);
     }
     console.log(`Откройте http://localhost:${config.port}/admin и отсканируйте QR-код телефоном`);

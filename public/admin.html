@@ -371,7 +371,13 @@ function avatar(name, id) {
   const letter = (String(name || "").trim().replace(/^\+/, "")[0] || "#").toUpperCase();
   return `<div class="avatar" style="background:${COLORS[Math.abs(h) % COLORS.length]}">${esc(letter)}</div>`;
 }
-const phone = (waId) => "+" + String(waId).split("|").pop().split("@")[0];
+// Номер клиента. Если WhatsApp скрыл его (id вида …@lid) и настоящий номер неизвестен, так и пишем
+const phone = (waId) => {
+  const c = typeof waId === "object" ? waId : state.chats.find((x) => x.wa_id === waId);
+  if (c?.phone) return "+" + c.phone;
+  const id = String(c?.wa_id ?? waId).split("|").pop();
+  return id.endsWith("@lid") ? "номер скрыт WhatsApp" : "+" + id.split("@")[0];
+};
 
 // ---------- Состояние ----------
 const state = { view: "chats", status: null, chats: [], current: null, filter: "all", search: "", app: null, kbFile: null };
@@ -522,7 +528,7 @@ async function openChat(id, refresh) {
   conv.innerHTML = `
     <div class="head">
       ${avatar(chat.name || phone(chat.wa_id), chat.wa_id)}
-      <div class="who"><b>${esc(chat.name || phone(chat.wa_id))}</b><small>${chat.mode === "bot" ? "бот на связи" : "оператор на связи"} · ${esc(phone(chat.wa_id))}${multi && accNames[chat.account_id] ? " · " + esc(accNames[chat.account_id]) : ""}</small></div>
+      <div class="who"><b>${esc(chat.name || phone(chat.wa_id))}</b><small>${chat.mode === "bot" ? "бот на связи" : "оператор на связи"} · ${esc(phone(chat))}${multi && accNames[chat.account_id] ? " · " + esc(accNames[chat.account_id]) : ""}</small></div>
       ${chat.mode === "bot"
         ? '<span class="pill ok"><span class="dot"></span>Отвечает бот</span><button class="btn sm" id="take">Взять диалог</button>'
         : '<span class="pill warn"><span class="dot"></span>Отвечаете вы</span><button class="btn ghost sm" id="release">Вернуть боту</button>'}

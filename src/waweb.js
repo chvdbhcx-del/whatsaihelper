@@ -77,6 +77,7 @@ const MAX_AGE_MS = 10 * 60 * 1000; // не отвечаем на сообщен�
 const logger = pino({ level: "warn" });
 
 let onMessage = () => {};
+let onConnected = () => {};
 let cachedVersion = null;
 const sessions = new Map(); // accountId → Session
 
@@ -148,6 +149,11 @@ class Session {
         log.info("whatsapp", `Номер «${this.accountId}» подключён: ${log.maskPhone(this.state.me)}${this.retries ? ` (после ${this.retries} попыток)` : ""}`);
         this.retries = 0;
         backupAuth(this.accountId);
+        try {
+          onConnected(this.accountId, this.state.me);
+        } catch (e) {
+          log.error("whatsapp", `Номер «${this.accountId}»: ошибка после подключения: ${e.message}`);
+        }
         clearInterval(this.backupTimer);
         this.backupTimer = setInterval(() => this.state.status === "connected" && backupAuth(this.accountId), 6 * 60 * 60 * 1000);
       }
@@ -194,7 +200,9 @@ class Session {
         const text = extractText(m.message);
         if (text == null) continue; // служебные сообщения (реакции, протокол и т.п.)
         this.lastKeys.set(jid, m.key);
-        onMessage({ account: this.accountId, id: m.key.id, from: jid, name: m.pushName, text });
+        // Если WhatsApp прислал скрытый id (…@lid), настоящий номер клиента иногда приходит отдельно
+        const pn = [jid, alt].find((j) => j && isPnUser(j));
+        onMessage({ account: this.accountId, id: m.key.id, from: jid, name: m.pushName, text, phone: pn ? jidNormalizedUser(pn).split("@")[0] : null });
       }
     });
   }
@@ -246,8 +254,9 @@ function extractText(msg) {
 
 // ---------- Управление аккаунтами ----------
 
-export function init(handler) {
+export function init(handler, connectedHandler) {
   onMessage = handler;
+  if (connectedHandler) onConnected = connectedHandler;
 }
 
 export function startAccount(accountId) {

@@ -41,13 +41,18 @@ if (!db.prepare(`PRAGMA table_info(chats)`).all().some((c) => c.name === "accoun
   if (!cols.includes("directed")) db.exec(`ALTER TABLE messages ADD COLUMN directed INTEGER NOT NULL DEFAULT 0`);
 }
 
+// Миграция: настоящий номер телефона клиента (WhatsApp может присылать скрытый id вида …@lid вместо номера)
+if (!db.prepare(`PRAGMA table_info(chats)`).all().some((c) => c.name === "phone")) {
+  db.exec(`ALTER TABLE chats ADD COLUMN phone TEXT`);
+}
+
 const now = () => Date.now();
 
-export function upsertChat(waId, name, accountId = "api") {
+export function upsertChat(waId, name, accountId = "api", phone = null) {
   db.prepare(
-    `INSERT INTO chats (wa_id, name, account_id, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(wa_id) DO UPDATE SET name = COALESCE(excluded.name, chats.name)`
-  ).run(waId, name ?? null, accountId, now());
+    `INSERT INTO chats (wa_id, name, account_id, phone, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(wa_id) DO UPDATE SET name = COALESCE(excluded.name, chats.name), phone = COALESCE(excluded.phone, chats.phone)`
+  ).run(waId, name ?? null, accountId, phone ?? null, now());
 }
 
 export function getChat(waId) {
@@ -140,4 +145,41 @@ export function chatIdsOfAccount(accountId) {
 
 export function getMessage(id) {
   return db.prepare(`SELECT * FROM messages WHERE id = ?`).get(id);
+}
+
+/** Номера бота, к которым привязаны диалоги, но которых больше нет в программе. */
+export function orphanAccounts(validIds) {
+  const keep = new Set([...validIds, "api", "loadtest"]);
+  return db.prepare(`SELECT DISTINCT account_id FROM chats`).all().map((r) => r.account_id).filter((id) => !keep.has(id));
+}
+
+/**
+ * Переносит диалоги со старого номера бота на новый (номер перепривязали в программе).
+ * Если у клиента уже есть диалог на новом номере, переписки объединяются. Возвращает число перенесённых диалогов.
+ */
+export function moveChats(fromAccount, toAccount) {
+  const rows = db.prepare(`SELECT * FROM chats WHERE account_id = ?`).all(fromAccount);
+  db.exec("BEGIN");
+  try {
+    for (const c of rows) {
+      const jid = c.wa_id.includes("|") ? c.wa_id.slice(c.wa_id.indexOf("|") + 1) : c.wa_id;
+      const target = `${toAccount}|${jid}`;
+      db.prepare(`UPDATE messages SET wa_id = ? WHERE wa_id = ?`).run(target, c.wa_id);
+      if (db.prepare(`SELECT 1 FROM chats WHERE wa_id = ?`).get(target)) {
+        db.prepare(
+          `UPDATE chats SET name = COALESCE(name, ?), phone = COALESCE(phone, ?),
+             last_customer_at = MAX(COALESCE(last_customer_at, 0), COALESCE(?, 0)),
+             needs_attention = MAX(needs_attention, ?), updated_at = MAX(updated_at, ?) WHERE wa_id = ?`
+        ).run(c.name, c.phone, c.last_customer_at, c.needs_attention, c.updated_at, target);
+        db.prepare(`DELETE FROM chats WHERE wa_id = ?`).run(c.wa_id);
+      } else {
+        db.prepare(`UPDATE chats SET wa_id = ?, account_id = ? WHERE wa_id = ?`).run(target, toAccount, c.wa_id);
+      }
+    }
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  }
+  return rows.length;
 }

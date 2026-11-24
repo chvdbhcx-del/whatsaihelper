@@ -76,7 +76,23 @@ export function updateAccount(id, patch) {
 }
 
 export function removeAccount(id) {
-  save({ ...current, accounts: (current.accounts ?? []).filter((a) => a.id !== id) });
+  // Запоминаем телефон удалённого номера: если его подключат снова, старые диалоги перейдут к нему
+  const phone = (current.accounts ?? []).find((a) => a.id === id)?.phone;
+  const removedPhones = { ...(current.removedPhones ?? {}) };
+  if (phone) removedPhones[id] = phone;
+  save({ ...current, removedPhones, accounts: (current.accounts ?? []).filter((a) => a.id !== id) });
+}
+
+/** Телефон номера бота, запомненный при последнем подключении. */
+export function setAccountPhone(id, phone) {
+  if (!phone) return;
+  const list = current.accounts ?? [];
+  if (!list.some((a) => a.id === id && a.phone !== phone)) return;
+  save({ ...current, accounts: list.map((a) => (a.id === id ? { ...a, phone } : a)) });
+}
+
+export function removedPhone(id) {
+  return current.removedPhones?.[id] ?? null;
 }
 
 export function update(patch) {

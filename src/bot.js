@@ -26,7 +26,7 @@ const again = new Set(); // пришли новые сообщения во вр
 export function onIncoming(msg) {
   const account = msg.account ?? "api";
   const chatId = msg.account ? `${msg.account}|${msg.from}` : msg.from;
-  db.upsertChat(chatId, msg.name, account);
+  db.upsertChat(chatId, msg.name, account, msg.phone ?? (/^\d+$/.test(msg.from) ? msg.from : null));
   const isNew = db.addMessage(chatId, "customer", msg.text, msg.id);
   if (!isNew) return; // повторная доставка вебхука
   log.info("message", `Входящее от ${log.maskPhone(chatId)} (${msg.text.length} симв.), номер «${account}»`);
@@ -164,5 +164,21 @@ export async function botReplyTo(waId, messageId, hint = "") {
   } finally {
     busy.delete(waId);
     if (again.delete(waId)) schedule(waId);
+  }
+}
+
+/**
+ * Номер бота подключился. Если в программе остались диалоги удалённого номера, переносим их сюда:
+ * тот же телефон (номер перепривязали) или это единственный номер в программе.
+ */
+export function onAccountConnected(accountId, me) {
+  settings.setAccountPhone(accountId, me);
+  const all = settings.accounts();
+  for (const old of db.orphanAccounts(all.map((a) => a.id))) {
+    const oldPhone = settings.removedPhone(old);
+    const sameNumber = oldPhone && me && oldPhone === me;
+    if (!sameNumber && (oldPhone || all.length !== 1)) continue;
+    const n = db.moveChats(old, accountId);
+    if (n) log.info("whatsapp", `Диалоги удалённого номера «${old}» (${n}) перенесены на номер «${accountId}»`);
   }
 }
