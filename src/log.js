@@ -104,8 +104,10 @@ for (const [method, level] of [["log", "info"], ["info", "info"], ["warn", "warn
   const orig = console[method].bind(console);
   console[method] = (...args) => {
     orig(...args);
-    const text = util.format(...args);
+    let text = util.format(...args);
     if (/ExperimentalWarning|SQLite is an experimental/.test(text)) return;
+    // Стек вызовов в журнале не нужен оператору: оставляем первую строку, без повторов «Error: Error:»
+    text = text.split(/\n\s+at\s/)[0].replace(/^(Error:\s*)+/, "").trim();
     log(level, "system", text);
   };
 }
