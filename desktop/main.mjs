@@ -69,6 +69,8 @@ async function firstRunWarning(dataDir) {
 // ---------- Обновления из GitHub Releases ----------
 // Состояние видно в панели (раздел «О программе») через globalThis.__desktop.
 const update = { status: "idle", version: null, percent: 0, error: null, checkedAt: null };
+let updateRetries = 0;
+let updateRetryTimer = null;
 let installing = false;
 let ulog = () => {}; // журнал программы (подключается после запуска сервера)
 
@@ -109,12 +111,15 @@ function setupUpdates() {
   }
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null; // свой журнал на русском ниже; служебный английский со стеком оператору не нужен
   autoUpdater.on("checking-for-update", () => Object.assign(update, { status: "checking", error: null }));
   autoUpdater.on("update-not-available", () => {
+    updateRetries = 0;
     Object.assign(update, { status: "latest", checkedAt: Date.now() });
     ulog("info", `Проверка обновлений: установлена последняя версия ${app.getVersion()}`);
   });
   autoUpdater.on("update-available", (i) => {
+    updateRetries = 0;
     Object.assign(update, { status: "downloading", version: i.version, percent: 0, checkedAt: Date.now() });
     ulog("info", `Найдена новая версия ${i.version}, скачивание`);
   });
@@ -124,8 +129,16 @@ function setupUpdates() {
     ulog("info", `Версия ${i.version} скачана и готова к установке`);
   });
   autoUpdater.on("error", (e) => {
-    Object.assign(update, { status: "error", error: String(e?.message || e).split("\n")[0], checkedAt: Date.now() });
-    ulog("warn", `Ошибка обновления: ${update.error}`);
+    const raw = String(e?.message || e).split("\n")[0].replace(/^(Error:\s*)+/, "");
+    const offline = /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_CONNECTION|ERR_TIMED_OUT|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET/i.test(raw);
+    // Повторяем проверку позже: 2, 5, 15, 30 минут, дальше раз в час
+    const mins = [2, 5, 15, 30, 60][Math.min(updateRetries, 4)];
+    updateRetries++;
+    clearTimeout(updateRetryTimer);
+    updateRetryTimer = setTimeout(checkUpdates, mins * 60 * 1000);
+    const text = offline ? "нет связи с сервером обновлений (похоже, нет интернета)" : raw;
+    Object.assign(update, { status: "error", error: text, checkedAt: Date.now() });
+    ulog("warn", `Не удалось проверить обновления: ${text}. Повторим через ${mins} мин`);
   });
   checkUpdates();
   setInterval(checkUpdates, 4 * 60 * 60 * 1000); // каждые 4 часа

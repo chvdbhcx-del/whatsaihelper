@@ -108,7 +108,7 @@ class Session {
     clearTimeout(this.retryTimer);
     const delay = Math.min(5000 * 2 ** this.retries, MAX_RETRY_MS);
     this.retries++;
-    log.warn("whatsapp", `Номер «${this.accountId}»: ${reason}. Попытка переподключения №${this.retries} через ${Math.round(delay / 1000)} с`);
+    log.warn("whatsapp", `Номер «${this.accountId}»: ${reason}. Переподключение через ${Math.round(delay / 1000)} с (попытка ${this.retries})`);
     this.retryTimer = setTimeout(() => this.connect().catch((e) => this.scheduleReconnect(`ошибка подключения: ${e.message}`)), delay);
   }
 
@@ -185,7 +185,8 @@ class Session {
         } else {
           this.state.status = "reconnecting";
           this.state.error = lastDisconnect?.error?.message ?? null;
-          this.scheduleReconnect(`связь потеряна (код ${code ?? "?"}${this.state.error ? ", " + this.state.error : ""})`);
+          const offline = /ENOTFOUND|EAI_AGAIN|ENETUNREACH|ECONNREFUSED|ETIMEDOUT|ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED/i.test(this.state.error ?? "");
+          this.scheduleReconnect(offline ? "нет связи с WhatsApp, похоже, пропал интернет" : `связь потеряна (код ${code ?? "?"}${this.state.error ? ", " + this.state.error : ""})`);
           return;
         }
         // После выхода из аккаунта показываем новый QR-код
